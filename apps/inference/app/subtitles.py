@@ -1,0 +1,49 @@
+from __future__ import annotations
+
+import re
+from collections.abc import Iterable
+
+from app.models import SubtitleCue
+
+
+def format_srt_timestamp(milliseconds: int) -> str:
+    if milliseconds < 0:
+        raise ValueError("milliseconds must be non-negative")
+    hours, remainder = divmod(milliseconds, 3_600_000)
+    minutes, remainder = divmod(remainder, 60_000)
+    seconds, millis = divmod(remainder, 1_000)
+    return f"{hours:02d}:{minutes:02d}:{seconds:02d},{millis:03d}"
+
+
+def normalize_text(text: str) -> str:
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def validate_cues(cues: Iterable[SubtitleCue]) -> list[SubtitleCue]:
+    normalized: list[SubtitleCue] = []
+    previous_end = -1
+    for expected_index, cue in enumerate(cues, start=1):
+        if cue.index != expected_index:
+            raise ValueError("cue indexes must be sequential and start at 1")
+        if cue.start_ms < 0 or cue.end_ms <= cue.start_ms:
+            raise ValueError(f"cue {cue.index} has an invalid time range")
+        if cue.start_ms < previous_end:
+            raise ValueError(f"cue {cue.index} overlaps the preceding cue")
+        text = normalize_text(cue.text)
+        if not text:
+            raise ValueError(f"cue {cue.index} text cannot be empty")
+        normalized.append(SubtitleCue(cue.index, cue.start_ms, cue.end_ms, text))
+        previous_end = cue.end_ms
+    return normalized
+
+
+def render_srt(cues: Iterable[SubtitleCue]) -> str:
+    lines: list[str] = []
+    for cue in validate_cues(cues):
+        lines.extend([
+            str(cue.index),
+            f"{format_srt_timestamp(cue.start_ms)} --> {format_srt_timestamp(cue.end_ms)}",
+            cue.text,
+            "",
+        ])
+    return "\n".join(lines).rstrip() + ("\n" if lines else "")
