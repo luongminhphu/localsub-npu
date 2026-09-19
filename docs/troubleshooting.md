@@ -1,21 +1,31 @@
 # Troubleshooting
 
-## FFmpeg missing
+## `ffmpeg` is not found
 
-Install an FFmpeg build for Windows and add its `bin` folder to `PATH`, or set `FFMPEG_PATH` in `.env`. Restart the terminal, then run `scripts/diagnostics.ps1`.
+- Install an FFmpeg build for Windows and add its `bin` directory to `PATH`.
+- Alternatively set `FFMPEG_PATH` to an absolute executable path in `.env`.
+- Restart the terminal after changing `PATH`.
+- Run `scripts/diagnostics.ps1` again.
 
-## OpenVINO or NPU unavailable
+## OpenVINO or NPU is unavailable
 
-Activate the intended Python environment, update the Intel NPU driver from the laptop vendor or Intel, reboot, inspect Device Manager/Task Manager, then run `python -m app.main diagnostics` from `apps/inference`. `OPENVINO_DEVICE=NPU` is intentionally strict; use `auto` only if fallback is acceptable.
+- Confirm the Python environment with OpenVINO is activated when running the worker.
+- Update the Intel NPU driver from your laptop vendor or Intel, then reboot.
+- Check Windows Device Manager and Task Manager > Performance for an NPU entry.
+- Run `python -m app.main diagnostics` from `apps/inference` and check `available_devices`.
+- If `OPENVINO_DEVICE=NPU`, no automatic fallback is expected. Use `auto` only when fallback is acceptable.
 
-## Task Manager shows 0% NPU
+## Task Manager reports 0% NPU utilization
 
-An idle NPU at 0% is normal. Verify a real inference workload and worker logs showing requested/resolved device. Preprocessing, decoding, and post-processing may still execute on CPU even when a model graph runs partly on NPU.
+An idle NPU showing 0% is normal. A valid verification requires a real inference workload and a worker log showing the requested/resolved device. Some graph operations, decoding, preprocessing, and post-processing can remain on CPU even when OpenVINO compiles part of a pipeline for NPU.
 
-## Tauri build fails
+## Tauri build fails on Windows
 
-Install Rust stable plus Visual Studio Build Tools with Desktop development with C++ and Windows SDK. Confirm `cargo --version`, then run `npm install` and `npm run build` in `apps/desktop`.
+- Install Rust stable using rustup.
+- Install Visual Studio Build Tools with the Desktop development with C++ workload and Windows SDK.
+- Confirm `cargo --version` works.
+- Run `npm install` inside `apps/desktop`, then `npm run build`.
 
-## Subtitle quality
+## Subtitles look incorrect
 
-Wave 1 does not transcribe media. In later waves, validate language selection, model variant, source audio quality, and FFmpeg extraction before tuning segmentation.
+Wave 1 does not transcribe media. In later waves, first verify source language selection, model variant, audio quality, and FFmpeg extraction before changing subtitle segmentation settings.

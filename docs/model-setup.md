@@ -2,9 +2,9 @@
 
 ## Wave 1 status
 
-No downloader or Whisper invocation exists yet. This document defines the local-only path so model artifacts are never committed.
+No model downloader or Whisper invocation is implemented in Wave 1. This document specifies the intended local-only model workflow so artifacts are not accidentally committed into the repository.
 
-## Intended local layout
+## Intended layout
 
 ```text
 data/
@@ -14,20 +14,30 @@ data/
     translation-vi-en/
 ```
 
-`data/` is gitignored.
+`data/` is excluded by `.gitignore`.
 
-## Planned policy
+## Planned model policy
 
-- Start verification with a compact OpenVINO Whisper base/small INT8 model.
-- English-to-Vietnamese requires a local translation model because Whisper's native translate path is generally English-oriented.
-- Persist model identifier, source, revision, checksum, license, conversion recipe, and OpenVINO version in a local manifest.
-- Require explicit upstream license acceptance during model setup.
+- Begin hardware verification with a compact Whisper OpenVINO model such as a base or small INT8 variant.
+- Use a locally stored translation model for English-to-Vietnamese. Native Whisper translation is generally oriented toward English output, so it is not sufficient by itself for EN → VI.
+- Store model identifier, source URL, revision, checksum, license, conversion recipe, and OpenVINO version in a local manifest.
+- Require users to accept the upstream model license during model download/setup.
 
-## Device verification
+## OpenVINO device selection
 
-1. Install OpenVINO in the local Python environment when Wave 2 is added.
-2. Run `scripts/diagnostics.ps1`.
-3. Confirm `NPU` is listed in `available_devices`.
-4. Benchmark the same short EN/VI fixture on NPU, GPU, and CPU.
-5. Capture elapsed time, real-time factor, memory, device resolution, and quality.
-6. Confirm no cloud transcription endpoint is used after model setup.
+Set `OPENVINO_DEVICE` in `.env`:
+
+```text
+OPENVINO_DEVICE=auto
+```
+
+`auto` asks the worker to attempt `NPU`, followed by `GPU`, followed by `CPU`. An explicit setting such as `NPU` is a hard requirement: if the NPU is unavailable, the job must fail with an actionable message rather than silently run elsewhere.
+
+## Verification checklist
+
+1. Install OpenVINO in the local Python environment when the Whisper slice is added.
+2. Run `scripts/diagnostics.ps1` and retain the JSON output.
+3. Confirm `NPU` appears in `available_devices`.
+4. Run the same short audio fixture on NPU, GPU, and CPU.
+5. Record elapsed time, real-time factor, peak memory, device resolution, and transcription quality.
+6. Confirm no cloud transcription endpoint is called after model setup.

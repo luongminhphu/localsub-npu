@@ -1,17 +1,20 @@
 # LocalSub NPU
 
-Offline Windows 11 AI subtitle generator using local Whisper/OpenVINO inference. No cloud AI token is required after model setup.
+LocalSub NPU is an offline Windows 11 desktop application for producing subtitle files from video or audio. It is designed to prioritize Intel NPU execution through OpenVINO when available, while providing clear GPU/CPU fallback behavior.
 
-## Wave 1
+The application never sends media to a cloud transcription service. Models are downloaded and stored locally by the user; after model setup, transcription can run offline without cloud AI tokens.
 
-- Tauri + React + TypeScript desktop UI scaffold
-- Python local worker scaffold
-- FFmpeg/OpenVINO diagnostics
-- `NPU -> GPU -> CPU` auto device preference
-- SRT validation and renderer
-- Unit tests, Windows scripts, and GitHub Actions CI
+## Wave 1 scope
 
-Wave 1 deliberately does not yet extract audio, invoke Whisper, translate text, or package an installer.
+- React + TypeScript + Tauri desktop UI shell
+- Python local worker foundation
+- FFmpeg and OpenVINO environment diagnostics
+- Device preference resolution: `NPU` -> `GPU` -> `CPU`
+- SRT domain model, validation, and renderer
+- Unit tests and CI checks
+- Windows bootstrap and diagnostics scripts
+
+Wave 1 intentionally does not yet invoke Whisper inference, extract audio, translate text, or package a Windows installer. Those capabilities are the next vertical slices.
 
 ## Architecture
 
@@ -22,63 +25,102 @@ Tauri + React desktop UI
           v
 Python local worker
   ├─ environment diagnostics
-  ├─ FFmpeg extraction (next slice)
+  ├─ FFmpeg audio extraction (next slice)
   ├─ OpenVINO Whisper inference (next slice)
-  └─ SRT rendering
+  └─ SRT/VTT rendering
 ```
 
-See [architecture](docs/architecture.md).
+Detailed design: [docs/architecture.md](docs/architecture.md).
 
 ## Requirements
 
 - Windows 11 x64
-- Node.js 22 LTS+
-- Python 3.11+
-- Rust stable and Visual Studio C++ Build Tools for Tauri
-- FFmpeg on `PATH` or configured via `FFMPEG_PATH`
+- Node.js 22 LTS or later
+- Python 3.11 or later
+- Rust stable and the Visual Studio C++ Build Tools for Tauri
+- FFmpeg available on `PATH`, or configured with `FFMPEG_PATH`
 - Intel NPU driver and OpenVINO runtime for NPU acceleration
 
 ## Quick start
 
+### 1. Configure the Python worker
+
 ```powershell
-# Python worker
 cd apps/inference
 py -3.11 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -e ".[dev]"
 pytest
 python -m app.main diagnostics
+```
 
-# Desktop UI
-cd ..\desktop
+### 2. Configure the desktop UI
+
+```powershell
+cd apps/desktop
 npm install
 npm run typecheck
 npm run dev
 ```
 
-Create local config from `.env.example`; do not commit `.env`.
+### 3. Create local configuration
 
-## Device policy
+```powershell
+Copy-Item .env.example .env
+```
 
-`OPENVINO_DEVICE=auto` resolves in order `NPU`, `GPU`, then `CPU`. Explicit device selection must fail clearly if unavailable rather than silently using another device. Runtime logs in later waves will record requested and actual device selection.
+Update model and output paths in `.env` if desired. Do not commit `.env`.
 
-## Privacy
+## Useful commands
 
-- Source media remains local.
-- No cloud API key is required for target offline inference.
-- Do not commit models, source media, subtitles, logs, or secrets.
+```powershell
+# Machine prerequisites and local inference diagnostics
+.\scripts\diagnostics.ps1
+
+# Optional dependency bootstrap helper
+.\scripts\bootstrap-windows.ps1
+
+# Python tests
+cd apps/inference; pytest
+
+# Frontend checks
+cd apps/desktop; npm run lint; npm run typecheck; npm run build
+```
+
+## Device behavior
+
+`OPENVINO_DEVICE=auto` attempts `NPU`, then `GPU`, then `CPU`. This is a policy preference, not proof that all graph operations execute on an NPU. The future inference worker will log the requested target, resolved device, OpenVINO version, model identifier, and fallback reason for every job.
+
+## Environment variables
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `OPENVINO_DEVICE` | `auto` | `auto`, `NPU`, `GPU`, or `CPU` |
+| `FFMPEG_PATH` | `ffmpeg` | FFmpeg executable or absolute path |
+| `LOCALSUB_OUTPUT_DIR` | `./data/output` | Generated subtitle output directory |
+| `LOCALSUB_MODEL_DIR` | `./data/models` | Local model cache directory |
+| `LOCALSUB_LOG_LEVEL` | `INFO` | Local structured log level |
+
+See [.env.example](.env.example).
+
+## Privacy and security
+
+- Source media stays on the local machine.
+- No API key is required for the target offline workflow.
+- Do not put credentials, tokens, source videos, audio files, or downloaded models into the repository.
+- Future jobs will persist an audit record locally with source path, output path, timestamps, selected model, requested device, resolved device, state, and error metadata. The transcript itself is not logged by default.
 
 ## Verification status
 
-Scaffolding has not been executed on the target laptop in this workflow. Run `scripts/diagnostics.ps1` first, then validate the later Whisper workload on NPU, GPU, and CPU with identical short EN/VI fixtures.
+The repository contains scaffolding and tests, but it has not been executed against this laptop through this repository workflow. The first required hardware verification is to run `scripts/diagnostics.ps1`, then test the future Whisper slice on `NPU`, `GPU`, and `CPU` with the same short EN and VI fixtures.
 
 ## Roadmap
 
 1. Wave 1: scaffold, diagnostics, subtitle renderer.
-2. Wave 2: FFmpeg extraction and OpenVINO Whisper to SRT.
-3. Wave 3: EN/VI translation, editor, VTT/TXT/JSON exports.
-4. Wave 4: benchmark, installer, observability, release hardening.
+2. Wave 2: FFmpeg extraction and OpenVINO Whisper transcription to SRT.
+3. Wave 3: EN/VI translation, editable subtitle table, VTT/TXT/JSON exports.
+4. Wave 4: benchmark, installer, observability, and release hardening.
 
 ## License
 
-MIT. Models are not included and retain their own licenses.
+MIT. Model files and their respective licenses are not included; each model must be obtained and used under its own license terms.

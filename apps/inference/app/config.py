@@ -18,10 +18,14 @@ class Settings:
     @classmethod
     def from_env(cls) -> "Settings":
         device = os.getenv("OPENVINO_DEVICE", "auto").strip()
-        device = "auto" if device.lower() == "auto" else device.upper()
+        if device.lower() == "auto":
+            device = "auto"
+        else:
+            device = device.upper()
         if device not in VALID_DEVICE_PREFERENCES:
             valid = ", ".join(sorted(VALID_DEVICE_PREFERENCES))
             raise ValueError(f"OPENVINO_DEVICE must be one of: {valid}")
+
         return cls(
             device_preference=device,
             ffmpeg_path=os.getenv("FFMPEG_PATH", "ffmpeg").strip() or "ffmpeg",
@@ -31,4 +35,6 @@ class Settings:
         )
 
     def preferred_devices(self) -> list[str]:
-        return ["NPU", "GPU", "CPU"] if self.device_preference == "auto" else [self.device_preference]
+        if self.device_preference == "auto":
+            return ["NPU", "GPU", "CPU"]
+        return [self.device_preference]
