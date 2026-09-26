@@ -20,6 +20,9 @@ openvino = [
   "huggingface_hub>=0.24",
 ]
 
+[tool.setuptools.packages.find]
+include = ["app*"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
