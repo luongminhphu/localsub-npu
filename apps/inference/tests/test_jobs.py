@@ -84,6 +84,7 @@ def install_llm(settings: Settings) -> None:
     path.mkdir(parents=True)
     for name in ("openvino_model.xml", "openvino_tokenizer.xml", "openvino_detokenizer.xml"):
         (path / name).write_text("<xml/>")
+        (path / name).with_suffix(".bin").write_bytes(b"\0")
 
 
 def test_job_with_translation_writes_bilingual_outputs(tmp_path, settings, installed_model):

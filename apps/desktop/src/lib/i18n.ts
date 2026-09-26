@@ -1,0 +1,381 @@
+/**
+ * UI strings in Vietnamese (default) and English. `en` is typed against `vi`, so a missing
+ * key fails type-check; i18n.test.ts also checks placeholders match between languages.
+ */
+import { createContext, useContext } from "react";
+
+export type Locale = "vi" | "en";
+
+const vi = {
+  "app.eyebrow": "CỤC BỘ · RIÊNG TƯ · WINDOWS 11",
+  "app.subtitle": "Phụ đề offline và dịch EN↔VI, JA → EN/VI trên Intel NPU.",
+  "app.chipPreview": "Xem trước trên trình duyệt · dữ liệu mẫu",
+  "app.chipDesktop": "Desktop · Wave 4",
+  "app.language": "Ngôn ngữ giao diện",
+
+  "media.title": "1. Media",
+  "media.choose": "Chọn video hoặc audio",
+  "media.hint": "MP4, MKV, MOV, AVI, WEBM, MP3, WAV, M4A",
+  "media.openProject": "Mở project đã lưu (.localsub.json)",
+
+  "config.title": "2. Cấu hình",
+  "config.spoken": "Ngôn ngữ nói",
+  "config.auto": "Tự nhận diện",
+  "config.translateTo": "Dịch sang",
+  "config.noTranslation": "Không dịch",
+  "lang.en": "Tiếng Anh",
+  "lang.ja": "Tiếng Nhật",
+  "lang.vi": "Tiếng Việt",
+  "config.speechModel": "Model nhận dạng · thiết bị",
+  "config.speechDevice": "Thiết bị nhận dạng",
+  "config.translationModel": "Model dịch · thiết bị",
+  "config.translationDevice": "Thiết bị dịch",
+  "config.autoOrder": "Auto = NPU → GPU → CPU.",
+  "config.notInstalled": " (chưa tải)",
+  "config.incomplete": " (tải dở)",
+  "config.jaWarn": "Với tiếng Nhật nên dùng whisper-large-v3-turbo-int8 (hoặc medium) để chính xác hơn.",
+  "config.formats": "Định dạng xuất",
+  "device.auto": "Tự động",
+
+  "hint.whisper-small-int8": "Mặc định khuyến nghị cho NPU.",
+  "hint.whisper-base-int8": "Nhanh hơn, kém chính xác hơn một chút.",
+  "hint.whisper-tiny-int8": "Chỉ để thử nhanh.",
+  "hint.whisper-medium-int8": "Chính xác hơn; chạy GPU hoặc CPU.",
+  "hint.whisper-large-v3-turbo-int8": "Cân bằng tốc độ/độ chính xác tốt nhất trên Arc GPU.",
+  "hint.whisper-large-v3-int8": "Chính xác nhất, chậm nhất.",
+  "hint.qwen3-8b-int4-cw": "Chất lượng tốt nhất; layout INT4-CW cho NPU.",
+  "hint.qwen2.5-7b-instruct-int4": "Chất lượng tốt; chạy tốt nhất trên Arc GPU.",
+  "hint.qwen3-4b-int4": "Cân bằng tốc độ và chất lượng.",
+  "hint.qwen2.5-1.5b-instruct-int4": "Bản nháp nhanh; cần soát kỹ.",
+  "hint.qwen3-0.6b-int4": "Chỉ để thử nhanh; dịch kém.",
+
+  "runtime.title": "3. Môi trường chạy",
+  "runtime.recheck": "Kiểm tra lại",
+  "runtime.checking": "Đang kiểm tra…",
+  "runtime.ffmpeg": "FFmpeg",
+  "runtime.found": "Có",
+  "runtime.missing": "Thiếu",
+  "runtime.ffmpegHint": "Cài FFmpeg: winget install Gyan.FFmpeg, rồi mở lại app.",
+  "runtime.openvino": "OpenVINO",
+  "runtime.devices": "Thiết bị",
+  "runtime.autoResolves": "Auto chọn",
+  "runtime.speechUsed": "Nhận dạng dùng",
+  "runtime.translationUsed": "Dịch dùng",
+  "runtime.fallback": "Chuyển thiết bị: {reason}",
+  "runtime.needModels": "Cần tải model trước: {models}. Mở mục Model bên dưới.",
+  "runtime.checkedAt": "Kiểm tra lúc {time} ({tz})",
+
+  "steps.probing": "Kiểm tra",
+  "steps.extracting_audio": "Audio",
+  "steps.loading_model": "Nạp model",
+  "steps.transcribing": "Nhận dạng",
+  "steps.translating": "Dịch",
+  "steps.rendering": "Ghi file",
+  "job.cancel": "Hủy",
+  "job.generate": "Tạo phụ đề",
+  "job.cancelled": "Đã hủy. Không file nào bị thay đổi.",
+  "job.wrote": "Đã ghi {files}",
+  "job.log": "Log worker ({n})",
+
+  "models.title": "Model",
+  "models.subtitle": "Tải một lần, dùng offline. Tải dở có thể tiếp tục.",
+  "models.refresh": "Làm mới",
+  "models.loading": "Đang đọc danh sách model…",
+  "models.loadFailed": "Không đọc được danh sách model: {error}",
+  "models.asr": "Nhận dạng giọng nói",
+  "models.translation": "Dịch",
+  "models.status.installed": "Đã cài",
+  "models.status.incomplete": "Tải dở",
+  "models.status.missing": "Chưa tải",
+  "models.download": "Tải về",
+  "models.resume": "Tải tiếp",
+  "models.remove": "Xóa",
+  "models.cancel": "Dừng",
+  "models.downloading": "Đang tải {model}: {done} / {total}",
+  "models.downloadingNoTotal": "Đang tải {model}: {done}",
+  "models.done": "Đã tải xong {model}.",
+  "models.alreadyInstalled": "{model} đã có sẵn.",
+  "models.stopped": "Đã dừng tải {model}. Bấm Tải tiếp để tiếp tục từ phần đã tải.",
+  "models.failed": "Tải {model} thất bại: {error}",
+  "models.busy": "Đang có một model khác tải.",
+  "models.confirmRemove": "Xóa model {model} ({size}) khỏi máy? Muốn dùng lại phải tải lại.",
+  "models.confirmTitle": "Xóa model",
+  "models.removed": "Đã xóa {model}.",
+  "models.approx": "~{size}",
+  "models.inUse": "Đang chọn",
+
+  "history.title": "Lịch sử xử lý",
+  "history.refresh": "Làm mới",
+  "history.loading": "Đang đọc lịch sử…",
+  "history.empty": "Chưa có job nào. Kết quả sẽ hiện ở đây sau lần chạy đầu.",
+  "history.failed": "Không đọc được lịch sử: {error}",
+  "history.updated": "Cập nhật lúc {time} ({tz})",
+  "history.stale": "dữ liệu có thể đã cũ",
+  "history.stats": "{completed}/{total} thành công · NPU {npu} · RTF trung vị {rtf} · {fallbacks} lần chuyển thiết bị",
+  "history.skipped": "Bỏ qua {n} dòng log hỏng.",
+  "history.col.time": "Thời gian",
+  "history.col.file": "File",
+  "history.col.lang": "Ngôn ngữ",
+  "history.col.device": "Thiết bị",
+  "history.col.duration": "Thời lượng",
+  "history.col.rtf": "RTF",
+  "history.col.state": "Trạng thái",
+  "history.state.completed": "Xong",
+  "history.state.failed": "Lỗi",
+  "history.state.cancelled": "Đã hủy",
+  "history.rtfHelp": "RTF = thời gian xử lý / thời lượng media. Nhỏ hơn 1 là nhanh hơn thời gian thực.",
+
+  "editor.title": "Chỉnh sửa phụ đề",
+  "editor.unsaved": "chưa lưu",
+  "editor.summary": "{n} câu · {src}{dst} · sửa chữ hoặc thời gian, rồi xuất file.",
+  "editor.export": "Xuất {formats}",
+  "editor.fix": "Sửa {n} lỗi trước khi xuất.",
+  "editor.start": "Câu {n} bắt đầu",
+  "editor.end": "Câu {n} kết thúc",
+  "editor.sourceLabel": "Câu {n} gốc",
+  "editor.translationLabel": "Câu {n} bản dịch",
+  "editor.col.start": "Bắt đầu",
+  "editor.col.end": "Kết thúc",
+  "editor.col.source": "Gốc",
+  "editor.col.translation": "Bản dịch",
+  "editor.col.actions": "Thao tác",
+  "editor.split": "Tách",
+  "editor.splitTitle": "Tách ở giữa",
+  "editor.merge": "Gộp",
+  "editor.mergeTitle": "Gộp với câu sau",
+  "editor.delete": "Xóa",
+  "editor.deleteTitle": "Xóa câu",
+  "editor.saved": "Đã lưu {n} file: {files}",
+  "editor.exportFailed": "Xuất thất bại: {error}",
+  "editor.opened": "Đã mở {file}",
+  "editor.openFailed": "Không mở được project: {error}",
+  "editor.notProject": "không phải file project LocalSub",
+  "issue.timing": "Thời gian kết thúc phải sau bắt đầu",
+  "issue.empty": "Câu gốc đang trống",
+  "issue.overlap": "Chồng lên câu trước",
+  "issue.too_long": "Dài quá {limit} ký tự",
+
+  "error.MODEL_NOT_FOUND": "Chưa có model. Tải model trong mục Model.",
+  "error.MODEL_INCOMPLETE": "Model mới tải dở. Bấm Tải tiếp trong mục Model.",
+  "error.DOWNLOAD_FAILED": "Tải model bị gián đoạn (mạng?). Bấm Tải tiếp để tiếp tục.",
+  "error.INSUFFICIENT_DISK": "Ổ đĩa không đủ chỗ trống để tải model.",
+  "error.MODEL_COMPILE_FAILED": "Không nạp được model trên thiết bị đã chọn. Thử Auto hoặc CPU.",
+  "error.FFMPEG_NOT_FOUND": "Chưa cài FFmpeg (winget install Gyan.FFmpeg).",
+  "error.OPENVINO_UNAVAILABLE": "Thiếu thư viện OpenVINO trong worker.",
+  "error.unknown": "Lỗi: {message}",
+} as const;
+
+export type MessageKey = keyof typeof vi;
+
+const en: Record<MessageKey, string> = {
+  "app.eyebrow": "LOCAL · PRIVATE · WINDOWS 11",
+  "app.subtitle": "Offline subtitles and EN↔VI, JA → EN/VI translation on the Intel NPU.",
+  "app.chipPreview": "Browser preview · sample data",
+  "app.chipDesktop": "Desktop · Wave 4",
+  "app.language": "Interface language",
+
+  "media.title": "1. Media",
+  "media.choose": "Choose video or audio",
+  "media.hint": "MP4, MKV, MOV, AVI, WEBM, MP3, WAV, M4A",
+  "media.openProject": "Open saved project (.localsub.json)",
+
+  "config.title": "2. Configure",
+  "config.spoken": "Spoken language",
+  "config.auto": "Auto detect",
+  "config.translateTo": "Translate to",
+  "config.noTranslation": "No translation",
+  "lang.en": "English",
+  "lang.ja": "Japanese",
+  "lang.vi": "Vietnamese",
+  "config.speechModel": "Speech model · device",
+  "config.speechDevice": "Speech device",
+  "config.translationModel": "Translation model · device",
+  "config.translationDevice": "Translation device",
+  "config.autoOrder": "Auto = NPU → GPU → CPU.",
+  "config.notInstalled": " (not installed)",
+  "config.incomplete": " (incomplete)",
+  "config.jaWarn": "For Japanese, whisper-large-v3-turbo-int8 (or medium) is recommended for accuracy.",
+  "config.formats": "Export formats",
+  "device.auto": "Auto",
+
+  "hint.whisper-small-int8": "Recommended default for the NPU.",
+  "hint.whisper-base-int8": "Faster, slightly less accurate.",
+  "hint.whisper-tiny-int8": "Smoke tests only.",
+  "hint.whisper-medium-int8": "Better accuracy; GPU or CPU.",
+  "hint.whisper-large-v3-turbo-int8": "Best speed/accuracy on the Arc GPU.",
+  "hint.whisper-large-v3-int8": "Highest accuracy, slowest.",
+  "hint.qwen3-8b-int4-cw": "Best quality; INT4-CW layout for the NPU.",
+  "hint.qwen2.5-7b-instruct-int4": "Good quality; best on the Arc GPU.",
+  "hint.qwen3-4b-int4": "Balanced speed and quality.",
+  "hint.qwen2.5-1.5b-instruct-int4": "Fast draft; review carefully.",
+  "hint.qwen3-0.6b-int4": "Smoke tests only; poor translations.",
+
+  "runtime.title": "3. Runtime",
+  "runtime.recheck": "Re-check",
+  "runtime.checking": "Checking…",
+  "runtime.ffmpeg": "FFmpeg",
+  "runtime.found": "Found",
+  "runtime.missing": "Missing",
+  "runtime.ffmpegHint": "Install FFmpeg: winget install Gyan.FFmpeg, then reopen the app.",
+  "runtime.openvino": "OpenVINO",
+  "runtime.devices": "Devices",
+  "runtime.autoResolves": "Auto resolves to",
+  "runtime.speechUsed": "Speech used",
+  "runtime.translationUsed": "Translation used",
+  "runtime.fallback": "Fallback: {reason}",
+  "runtime.needModels": "Download first: {models}. Open the Models section below.",
+  "runtime.checkedAt": "Checked at {time} ({tz})",
+
+  "steps.probing": "Check",
+  "steps.extracting_audio": "Audio",
+  "steps.loading_model": "Load model",
+  "steps.transcribing": "Transcribe",
+  "steps.translating": "Translate",
+  "steps.rendering": "Write files",
+  "job.cancel": "Cancel",
+  "job.generate": "Generate subtitles",
+  "job.cancelled": "Job cancelled. No files were changed.",
+  "job.wrote": "Wrote {files}",
+  "job.log": "Worker log ({n})",
+
+  "models.title": "Models",
+  "models.subtitle": "Download once, use offline. Interrupted downloads resume.",
+  "models.refresh": "Refresh",
+  "models.loading": "Reading model list…",
+  "models.loadFailed": "Cannot read the model list: {error}",
+  "models.asr": "Speech recognition",
+  "models.translation": "Translation",
+  "models.status.installed": "Installed",
+  "models.status.incomplete": "Incomplete",
+  "models.status.missing": "Not downloaded",
+  "models.download": "Download",
+  "models.resume": "Resume",
+  "models.remove": "Remove",
+  "models.cancel": "Stop",
+  "models.downloading": "Downloading {model}: {done} / {total}",
+  "models.downloadingNoTotal": "Downloading {model}: {done}",
+  "models.done": "{model} downloaded.",
+  "models.alreadyInstalled": "{model} is already installed.",
+  "models.stopped": "Stopped downloading {model}. Press Resume to continue where it left off.",
+  "models.failed": "Download of {model} failed: {error}",
+  "models.busy": "Another model is downloading.",
+  "models.confirmRemove": "Remove {model} ({size}) from this PC? You will need to download it again to use it.",
+  "models.confirmTitle": "Remove model",
+  "models.removed": "Removed {model}.",
+  "models.approx": "~{size}",
+  "models.inUse": "Selected",
+
+  "history.title": "Job history",
+  "history.refresh": "Refresh",
+  "history.loading": "Reading history…",
+  "history.empty": "No jobs yet. Results appear here after the first run.",
+  "history.failed": "Cannot read history: {error}",
+  "history.updated": "Updated at {time} ({tz})",
+  "history.stale": "data may be stale",
+  "history.stats": "{completed}/{total} succeeded · NPU {npu} · median RTF {rtf} · {fallbacks} device fallback(s)",
+  "history.skipped": "Skipped {n} damaged log line(s).",
+  "history.col.time": "Time",
+  "history.col.file": "File",
+  "history.col.lang": "Language",
+  "history.col.device": "Device",
+  "history.col.duration": "Duration",
+  "history.col.rtf": "RTF",
+  "history.col.state": "State",
+  "history.state.completed": "Done",
+  "history.state.failed": "Failed",
+  "history.state.cancelled": "Cancelled",
+  "history.rtfHelp": "RTF = processing time / media duration. Below 1 is faster than real time.",
+
+  "editor.title": "Subtitle editor",
+  "editor.unsaved": "unsaved",
+  "editor.summary": "{n} cues · {src}{dst} · edit text or times, then export.",
+  "editor.export": "Export {formats}",
+  "editor.fix": "Fix {n} issue(s) before exporting.",
+  "editor.start": "Cue {n} start",
+  "editor.end": "Cue {n} end",
+  "editor.sourceLabel": "Cue {n} source",
+  "editor.translationLabel": "Cue {n} translation",
+  "editor.col.start": "Start",
+  "editor.col.end": "End",
+  "editor.col.source": "Source",
+  "editor.col.translation": "Translation",
+  "editor.col.actions": "Actions",
+  "editor.split": "Split",
+  "editor.splitTitle": "Split at midpoint",
+  "editor.merge": "Merge",
+  "editor.mergeTitle": "Merge with next cue",
+  "editor.delete": "Delete",
+  "editor.deleteTitle": "Delete cue",
+  "editor.saved": "Saved {n} file(s): {files}",
+  "editor.exportFailed": "Export failed: {error}",
+  "editor.opened": "Opened {file}",
+  "editor.openFailed": "Cannot open project: {error}",
+  "editor.notProject": "not a LocalSub project file",
+  "issue.timing": "End must be after start",
+  "issue.empty": "Source text is empty",
+  "issue.overlap": "Overlaps the previous cue",
+  "issue.too_long": "Longer than {limit} characters",
+
+  "error.MODEL_NOT_FOUND": "Model not downloaded. Get it in the Models section.",
+  "error.MODEL_INCOMPLETE": "Model is only partly downloaded. Press Resume in the Models section.",
+  "error.DOWNLOAD_FAILED": "Model download was interrupted (network?). Press Resume to continue.",
+  "error.INSUFFICIENT_DISK": "Not enough free disk space to download the model.",
+  "error.MODEL_COMPILE_FAILED": "The model could not load on the chosen device. Try Auto or CPU.",
+  "error.FFMPEG_NOT_FOUND": "FFmpeg is not installed (winget install Gyan.FFmpeg).",
+  "error.OPENVINO_UNAVAILABLE": "OpenVINO libraries are missing in the worker.",
+  "error.unknown": "Error: {message}",
+};
+
+export const MESSAGES: Record<Locale, Record<MessageKey, string>> = { vi, en };
+export const LOCALE_STORAGE_KEY = "localsub.locale";
+
+export type Translate = (key: MessageKey, params?: Record<string, string | number>) => string;
+
+export function translate(
+  locale: Locale,
+  key: MessageKey,
+  params: Record<string, string | number> = {},
+): string {
+  const template = MESSAGES[locale][key] ?? MESSAGES.vi[key] ?? key;
+  return template.replace(/\{(\w+)\}/g, (match, name: string) =>
+    name in params ? String(params[name]) : match,
+  );
+}
+
+export function initialLocale(storage: Pick<Storage, "getItem"> | null = safeStorage()): Locale {
+  const saved = storage?.getItem(LOCALE_STORAGE_KEY);
+  return saved === "en" || saved === "vi" ? saved : "vi";
+}
+
+export function safeStorage(): Storage | null {
+  try {
+    return typeof window !== "undefined" ? window.localStorage : null;
+  } catch {
+    return null; // storage can be blocked; the UI still works in the default language
+  }
+}
+
+/** Human message for a worker error. Worker errors look like `CODE: detail` or JSON. */
+export function errorMessage(t: Translate, raw: string | null | undefined): string {
+  if (!raw) return "";
+  let code: string | null = null;
+  let detail = raw;
+  try {
+    const parsed = JSON.parse(raw) as { error_code?: string; error_message?: string };
+    code = parsed.error_code ?? null;
+    detail = parsed.error_message ?? raw;
+  } catch {
+    const match = /\b([A-Z][A-Z_]{3,})\b/.exec(raw);
+    code = match?.[1] ?? null;
+  }
+  const key = code ? (`error.${code}` as MessageKey) : null;
+  if (key && key in MESSAGES.vi) return `${t(key)} (${detail})`;
+  return t("error.unknown", { message: detail });
+}
+
+export const I18nContext = createContext<{ locale: Locale; t: Translate }>({
+  locale: "vi",
+  t: (key, params) => translate("vi", key, params),
+});
+
+export const useI18n = () => useContext(I18nContext);

@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from app.devices import compile_with_fallback, ensure_ir_present, snapshot
+from app.devices import compile_with_fallback, ensure_ir_present
 from app.errors import ErrorCode, LocalSubError
 from app.models import DeviceResolution
 
@@ -57,6 +57,13 @@ class TranslationResult:
     inference_ms: int
 
 
+REQUIRED_FILES: tuple[str, ...] = (
+    "openvino_model.xml",
+    "openvino_tokenizer.xml",
+    "openvino_detokenizer.xml",
+)
+
+
 def model_path_for(model_dir: Path, model_id: str) -> Path:
     if model_id not in TRANSLATION_CATALOG:
         known = ", ".join(sorted(TRANSLATION_CATALOG))
@@ -69,16 +76,16 @@ def model_path_for(model_dir: Path, model_id: str) -> Path:
 def ensure_model_present(path: Path, model_id: str) -> Path:
     return ensure_ir_present(
         path,
-        ("openvino_model.xml", "openvino_tokenizer.xml", "openvino_detokenizer.xml"),
+        REQUIRED_FILES,
         model_id,
         "models download",
     )
 
 
 def download_model(model_dir: Path, model_id: str) -> Path:
-    target = model_path_for(model_dir, model_id)
-    snapshot(TRANSLATION_CATALOG[model_id], target)
-    return ensure_model_present(target, model_id)
+    from app import model_store
+
+    return model_store.download(model_dir, model_id).path
 
 
 def npu_properties(device: str) -> dict[str, Any]:

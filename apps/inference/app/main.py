@@ -7,7 +7,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
-from app import translation, whisper
+from app import history, model_store, translation, whisper
 from app.audit import to_jsonable
 from app.config import Settings, load_env_file
 from app.diagnostics import build_diagnostic_report
@@ -43,8 +43,16 @@ def build_parser() -> argparse.ArgumentParser:
     models = sub.add_parser("models", help="List or download OpenVINO models")
     models_sub = models.add_subparsers(dest="models_command", required=True)
     models_sub.add_parser("list")
-    download = models_sub.add_parser("download")
+    download = models_sub.add_parser("download", help="Download or resume a model")
     download.add_argument("model_id", choices=sorted(ALL_MODELS))
+    download.add_argument(
+        "--events", action="store_true", help="Print JSON Lines progress events on stdout"
+    )
+    remove = models_sub.add_parser("remove", help="Delete a downloaded model folder")
+    remove.add_argument("model_id", choices=sorted(ALL_MODELS))
+
+    hist = sub.add_parser("history", help="Show recent jobs from the local audit log")
+    hist.add_argument("--limit", type=int, default=20)
 
     tr = sub.add_parser("transcribe", help="Generate subtitles from local media")
     tr.add_argument("source", type=Path)
@@ -233,6 +241,36 @@ def _cmd_export(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_models(args: argparse.Namespace, settings: Settings) -> int:
+    if args.models_command == "list":
+        _print_json(model_store.list_models(settings.model_dir))
+        return 0
+    if args.models_command == "remove":
+        _print_json(model_store.remove(settings.model_dir, args.model_id))
+        return 0
+
+    def emit(event: dict[str, Any]) -> None:
+        print(json.dumps(to_jsonable(event), ensure_ascii=False), flush=True)
+
+    result = model_store.download(
+        settings.model_dir, args.model_id, emit=emit if args.events else None
+    )
+    payload = {
+        "type": "summary",
+        "model_id": result.model_id,
+        "kind": result.kind,
+        "path": result.path,
+        "status": result.status,
+        "size_bytes": result.size_bytes,
+        "already_installed": result.already_installed,
+    }
+    if args.events:
+        emit(payload)
+    else:
+        _print_json(payload)
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     for stream in (sys.stdout, sys.stderr, sys.stdin):
         if hasattr(stream, "reconfigure"):
@@ -248,33 +286,18 @@ def main(argv: list[str] | None = None) -> int:
             payload = asdict(report)
             payload["output_dir"] = str(settings.output_dir)
             payload["model_dir"] = str(settings.model_dir)
-            payload["installed_models"] = [
-                m for m in ALL_MODELS if (settings.model_dir / m).is_dir()
-            ]
+            payload["installed_models"] = model_store.installed_models(settings.model_dir)
             _print_json(payload)
             return 0
 
         if args.command == "models":
-            if args.models_command == "list":
-                _print_json(
-                    [
-                        {
-                            "id": m,
-                            "kind": kind,
-                            "source": repo,
-                            "installed": (settings.model_dir / m).is_dir(),
-                            "path": settings.model_dir / m,
-                        }
-                        for m, (kind, repo) in ALL_MODELS.items()
-                    ]
-                )
-                return 0
-            kind, _ = ALL_MODELS[args.model_id]
-            module = whisper if kind == "asr" else translation
-            path = module.download_model(settings.model_dir, args.model_id)
-            _print_json({"model_id": args.model_id, "kind": kind, "path": path})
-            return 0
+            return _cmd_models(args, settings)
 
+        if args.command == "history":
+            _print_json(
+                history.recent_jobs(settings.output_dir / "logs" / "jobs.jsonl", args.limit)
+            )
+            return 0
         if args.command == "transcribe":
             return _cmd_transcribe(args, settings)
         if args.command == "translate":
