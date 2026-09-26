@@ -16,7 +16,7 @@ class Settings:
     log_level: str
 
     @classmethod
-    def from_env(cls) -> "Settings":
+    def from_env(cls) -> Settings:
         device = os.getenv("OPENVINO_DEVICE", "auto").strip()
         if device.lower() == "auto":
             device = "auto"

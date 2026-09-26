@@ -38,3 +38,4 @@ apps/desktop/src-tauri/target/
 .idea/
 .DS_Store
 Thumbs.db
+*.tsbuildinfo
