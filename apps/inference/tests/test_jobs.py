@@ -160,3 +160,17 @@ def test_explicit_output_path_is_respected(tmp_path, settings, installed_model):
         ffmpeg_runner=fake_ffmpeg,
     )
     assert record.output_path == out.resolve()
+
+
+def test_prune_stale_temp_only_removes_old_wavs(tmp_path):
+    import os
+
+    from app.jobs import STALE_TEMP_SECONDS, prune_stale_temp
+
+    old, fresh, other = tmp_path / "a.wav", tmp_path / "b.wav", tmp_path / "keep.txt"
+    for f in (old, fresh, other):
+        f.write_bytes(b"x")
+    os.utime(old, (0, 0))
+    os.utime(other, (0, 0))
+    assert prune_stale_temp(tmp_path, now=STALE_TEMP_SECONDS + 10) == 1
+    assert not old.exists() and fresh.exists() and other.exists()

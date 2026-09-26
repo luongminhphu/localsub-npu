@@ -47,5 +47,33 @@ jobs:
         run: npm run lint
       - name: Type check
         run: npm run typecheck
+      - name: Unit tests
+        run: npm test
       - name: Build
         run: npm run build
+
+  tauri-windows:
+    name: Tauri shell (Windows) check and test
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri
+      - name: Build frontend (generate_context needs ../dist)
+        working-directory: apps/desktop
+        run: |
+          npm ci
+          npm run build
+      - name: Cargo check
+        working-directory: apps/desktop/src-tauri
+        run: cargo check --locked --all-targets
+      - name: Cargo test
+        working-directory: apps/desktop/src-tauri
+        run: cargo test --locked

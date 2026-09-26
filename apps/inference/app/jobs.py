@@ -89,6 +89,25 @@ def _openvino_version() -> tuple[str | None, tuple[str, ...]]:
     return getattr(ov, "__version__", "unknown"), tuple(ov.Core().available_devices)
 
 
+STALE_TEMP_SECONDS = 6 * 3600
+
+
+def prune_stale_temp(temp_dir: Path, now: float | None = None) -> int:
+    """Remove WAVs left behind by jobs that were killed (desktop Cancel terminates the worker)."""
+    if not temp_dir.is_dir():
+        return 0
+    cutoff = (now if now is not None else time.time()) - STALE_TEMP_SECONDS
+    removed = 0
+    for wav in temp_dir.glob("*.wav"):
+        try:
+            if wav.stat().st_mtime < cutoff:
+                wav.unlink()
+                removed += 1
+        except OSError:
+            continue
+    return removed
+
+
 def run_job(
     settings: Settings,
     request: JobRequest,
@@ -124,6 +143,7 @@ def run_job(
     def timed(name: str, started: float) -> None:
         record.timings_ms[name] = int((time.perf_counter() - started) * 1000)
 
+    prune_stale_temp(temp_audio.parent)
     try:
         transition(JobState.PROBING)
         unknown = [f for f in request.formats if f not in FORMATS]

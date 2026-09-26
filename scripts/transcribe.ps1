@@ -5,6 +5,9 @@
   .\scripts\transcribe.ps1 -Source "D:\Videos\meeting.mp4" -Language vi -Device NPU
 .EXAMPLE
   .\scripts\transcribe.ps1 -Source ".\talk.mp4" -Language vi -Task translate   # Vietnamese speech -> English SRT
+.EXAMPLE
+  .\scripts\transcribe.ps1 -Source ".\webinar.mp4" -Language en -TranslateTo vi -Formats srt,vtt,json
+  # English SRT + Vietnamese SRT (local LLM) + VTT + editable project JSON
 #>
 [CmdletBinding()]
 param(
@@ -13,7 +16,11 @@ param(
   [ValidateSet("transcribe", "translate")][string]$Task = "transcribe",
   [ValidateSet("auto", "NPU", "GPU", "CPU")][string]$Device = "auto",
   [string]$Model = "whisper-small-int8",
-  [string]$Output
+  [string]$Output,
+  [ValidateSet("vi", "en")][string]$TranslateTo,
+  [string]$TranslationModel = "qwen3-8b-int4-cw",
+  [ValidateSet("auto", "NPU", "GPU", "CPU")][string]$TranslationDevice = "auto",
+  [string[]]$Formats = @("srt")
 )
 
 $ErrorActionPreference = "Stop"
@@ -29,6 +36,11 @@ if (-not $env:LOCALSUB_OUTPUT_DIR) { $env:LOCALSUB_OUTPUT_DIR = Join-Path $repoR
 $arguments = @("-m", "app.main", "transcribe", $sourcePath, "--language", $Language, "--task", $Task,
   "--device", $Device, "--model", $Model)
 if ($Output) { $arguments += @("--output", $Output) }
+if ($TranslateTo) {
+  $arguments += @("--translate-to", $TranslateTo, "--translation-model", $TranslationModel,
+    "--translation-device", $TranslationDevice)
+}
+$arguments += @("--formats", ($Formats -join ","))
 
 Write-Host "Tip: open Task Manager > Performance > NPU 0 to watch utilization during inference." -ForegroundColor Yellow
 Push-Location $worker
