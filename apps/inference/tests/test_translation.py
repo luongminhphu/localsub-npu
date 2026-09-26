@@ -16,8 +16,7 @@ def make_translator(llm: FakeLLM) -> translation.LoadedTranslator:
 
 def test_parse_numbered_handles_think_and_formats() -> None:
     raw = (
-        "<think>hmm</think>\n1. Xin chào\n2) Tạm biệt\n"
-        '[3]: "Cảm ơn"\nnote: ignore\n9. out of range'
+        '<think>hmm</think>\n1. Xin chào\n2) Tạm biệt\n[3]: "Cảm ơn"\nnote: ignore\n9. out of range'
     )
     assert translation.parse_numbered(raw, 3) == ["Xin chào", "Tạm biệt", "Cảm ơn"]
 
@@ -31,7 +30,11 @@ def test_translate_batches_keep_alignment_and_progress() -> None:
     progress: list[tuple[int, int]] = []
     lines = [f"line {i}" for i in range(1, 11)]
     result = translation.translate_lines(
-        make_translator(llm), lines, "en", "vi", batch_size=4,
+        make_translator(llm),
+        lines,
+        "en",
+        "vi",
+        batch_size=4,
         on_progress=lambda d, t: progress.append((d, t)),
     )
     assert list(result.lines) == [f"[vi] line {i}" for i in range(1, 11)]
@@ -96,3 +99,62 @@ def test_translation_model_missing_hint(tmp_path: Path) -> None:
     with pytest.raises(LocalSubError) as err:
         translation.ensure_model_present(tmp_path / "x", "qwen3-8b-int4-cw")
     assert "models download qwen3-8b-int4-cw" in err.value.message
+
+
+def test_japanese_prompt_names_language_and_adds_fragment_rule() -> None:
+    messages = translation.build_messages(["こんにちは"], "ja", "vi")
+    system = messages[0]["content"]
+    assert "from Japanese to Vietnamese" in system
+    assert "fragments of one sentence" in system
+    en = translation.build_messages(["Hello"], "en", "vi")[0]["content"]
+    assert "fragments" not in en
+
+
+def test_parse_numbered_accepts_full_width_numbering() -> None:
+    raw = "１．Xin chào\n２） Cảm ơn"
+    assert translation.parse_numbered(raw, 2) == ["Xin chào", "Cảm ơn"]
+
+
+def test_translate_japanese_lines_to_english() -> None:
+    llm = FakeLLM()
+    result = translation.translate_lines(
+        make_translator(llm), ["こんにちは", "ありがとう"], "ja", "en"
+    )
+    assert list(result.lines) == ["[vi] こんにちは", "[vi] ありがとう"]
+    assert result.fallback_lines == 0
+    assert "Translate to English" in llm.prompts[0]
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        "N. text",
+        "text",
+        "N. 1. 1. 1.",
+        "1. 1. 1. 1. 1. 1. 1. 1.",
+        "rất rất rất rất rất rất rất",
+        "123",
+    ],
+)
+def test_plausible_rejects_placeholders_and_loops(bad: str) -> None:
+    assert translation.plausible(bad, "本日は決算説明会です") is None
+
+
+@pytest.mark.parametrize(
+    ("value", "source"),
+    [("Doanh thu tăng 12%.", "売上高は12%増加しました。"), ("Toyota", "トヨタ"), ("12", "12")],
+)
+def test_plausible_keeps_normal_translations(value: str, source: str) -> None:
+    assert translation.plausible(value, source) == value
+
+
+def test_degenerate_output_is_retried_then_falls_back() -> None:
+    class LoopLLM(FakeLLM):
+        def generate(self, prompt, config=None, **_kwargs):
+            self.prompts.append(prompt)
+            return "1. 1. 1. 1. 1. 1. 1. 1."
+
+    llm = LoopLLM()
+    result = translation.translate_lines(make_translator(llm), ["こんにちは"], "ja", "vi")
+    assert list(result.lines) == ["こんにちは"] and result.fallback_lines == 1
+    assert len(llm.prompts) == 2  # batch + single-line retry

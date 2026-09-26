@@ -3,12 +3,12 @@
 Ứng dụng desktop Windows 11 tạo phụ đề cho video/audio **hoàn toàn offline**, ưu tiên chạy trên **Intel NPU**
 (Intel AI Boost) qua OpenVINO, tự chuyển sang GPU/CPU khi cần và ghi lại lý do.
 
-- Nhận dạng giọng nói tiếng Việt / tiếng Anh bằng Whisper (OpenVINO GenAI).
-- Dịch phụ đề **Anh ↔ Việt** bằng mô hình ngôn ngữ chạy trên máy (Qwen INT4), giữ nguyên mốc thời gian.
+- Nhận dạng giọng nói **tiếng Việt / tiếng Anh / tiếng Nhật** bằng Whisper (OpenVINO GenAI).
+- Dịch phụ đề **Anh ↔ Việt**, **Nhật → Anh**, **Nhật → Việt** bằng mô hình ngôn ngữ chạy trên máy (Qwen INT4), giữ nguyên mốc thời gian.
 - Sửa phụ đề trực tiếp trong bảng, xuất **SRT, VTT, TXT** và file dự án `.localsub.json`.
 - Media không bao giờ rời khỏi máy. Sau khi tải model lần đầu, không cần Internet và không cần API key.
 
-> Phiên bản hiện tại: **0.3.0 (Wave 3)**. Chưa có bộ cài (installer); chạy từ mã nguồn theo hướng dẫn bên dưới.
+> Phiên bản hiện tại: **0.4.0 (Wave 3 + tiếng Nhật)**. Chưa có bộ cài (installer); chạy từ mã nguồn theo hướng dẫn bên dưới.
 
 ---
 
@@ -200,7 +200,7 @@ Giao diện hiện đang bằng tiếng Anh. Quy trình gồm 3 bảng bên trá
 
 | Mục | Chọn |
 |---|---|
-| **Spoken language** | Ngôn ngữ nói trong video: `Vietnamese`, `English` hoặc `Auto detect` |
+| **Spoken language** | Ngôn ngữ nói trong video: `Vietnamese`, `English`, `Japanese` hoặc `Auto detect` |
 | **Speech model · device** | Model Whisper và thiết bị (`auto`, `NPU`, `GPU`, `CPU`) |
 | **Translate to** | `No translation`, hoặc ngôn ngữ đích (Việt/Anh) để tạo thêm bản dịch |
 | **Translation model · device** | Model dịch và thiết bị (hiện khi có chọn dịch) |
@@ -224,7 +224,8 @@ Bấm **Re-check** sau khi cài driver hoặc tải model.
 
 - Sửa trực tiếp cột thời gian (**Start**, **End**, định dạng `hh:mm:ss,mmm`), **Source** và **Translation**.
 - **Split**: tách câu làm đôi tại điểm giữa. **Merge**: gộp với câu kế tiếp. **Delete**: xóa câu.
-- Ứng dụng kiểm tra liên tục: thời gian chồng nhau, End trước Start, câu trống, câu dài hơn 84 ký tự.
+- Ứng dụng kiểm tra liên tục: thời gian chồng nhau, End trước Start, câu trống, câu dài hơn 84 ký tự
+  (tiếng Nhật: 32 ký tự).
   Lỗi nghiêm trọng sẽ chặn nút xuất; dòng có lỗi được tô màu.
 - Nhãn **unsaved** cho biết có thay đổi chưa xuất.
 
@@ -243,6 +244,10 @@ Mỗi ngôn ngữ ra một file riêng, ví dụ `talk.en.srt`, `talk.vi.srt`, k
 # Video tiếng Việt -> phụ đề tiếng Việt trên NPU
 .\scripts\transcribe.ps1 -Source "D:\Videos\hop.mp4" -Language vi -Device NPU
 
+# Video tiếng Nhật -> phụ đề tiếng Nhật + bản dịch tiếng Việt (dùng Whisper large-v3-turbo cho tiếng Nhật)
+.\scripts\transcribe.ps1 -Source "D:\Videos\seminar-jp.mp4" -Language ja -TranslateTo vi `
+  -Model whisper-large-v3-turbo-int8 -Formats srt,json
+
 # Video tiếng Anh -> phụ đề tiếng Anh + bản dịch tiếng Việt, xuất SRT, VTT và project JSON
 .\scripts\transcribe.ps1 -Source "D:\Videos\webinar.mp4" -Language en -TranslateTo vi -Formats srt,vtt,json
 
@@ -259,11 +264,11 @@ Tham số `transcribe.ps1`:
 | Tham số | Mặc định | Giá trị |
 |---|---|---|
 | `-Source` | (bắt buộc) | Đường dẫn video/audio |
-| `-Language` | `auto` | `auto`, `vi`, `en` |
+| `-Language` | `auto` | `auto`, `vi`, `en`, `ja` |
 | `-Task` | `transcribe` | `transcribe`, hoặc `translate` (Whisper → tiếng Anh) |
 | `-Device` | `auto` | `auto`, `NPU`, `GPU`, `CPU` cho Whisper |
 | `-Model` | `whisper-small-int8` | Model Whisper |
-| `-TranslateTo` | (không) | `vi` hoặc `en` — thêm bản dịch bằng model dịch |
+| `-TranslateTo` | (không) | `vi` hoặc `en` — thêm bản dịch bằng model dịch (tiếng Nhật chỉ là ngôn ngữ nguồn) |
 | `-TranslationModel` | `qwen3-8b-int4-cw` | Model dịch |
 | `-TranslationDevice` | `auto` | Thiết bị cho model dịch |
 | `-Formats` | `srt` | Danh sách `srt,vtt,txt,json` |
@@ -285,6 +290,10 @@ $py = ".\.venv\Scripts\python.exe"
 
 # Dịch một file SRT có sẵn (kết quả nằm cạnh file gốc: D:\talk.vi.srt)
 & $py -m app.main translate D:\talk.en.srt --from en --to vi --device NPU --formats srt,vtt
+
+# Dịch phụ đề tiếng Nhật sang tiếng Việt hoặc tiếng Anh (kết quả: D:\seminar.vi.srt)
+& $py -m app.main translate D:\seminar.ja.srt --from ja --to vi --formats srt
+& $py -m app.main translate D:\seminar.ja.srt --from ja --to en --formats srt
 
 # Xuất lại từ project JSON đã sửa
 & $py -m app.main export --input D:\talk.localsub.json --output-base D:\final\talk --formats srt,vtt,txt
@@ -322,7 +331,7 @@ số câu dịch lỗi (`translation_fallback_lines`) và mã lỗi — **không
 | `whisper-tiny-int8`, `whisper-base-int8` | Thử nhanh; tiếng Việt yếu |
 | `whisper-small-int8` | **Mặc định**, cân bằng, chạy tốt trên NPU |
 | `whisper-medium-int8` | Tiếng Việt tốt hơn, chậm hơn |
-| `whisper-large-v3-turbo-int8` | Chất lượng/tốc độ tốt nhất cho tiếng Việt; thử cả GPU và NPU |
+| `whisper-large-v3-turbo-int8` | Chất lượng/tốc độ tốt nhất cho tiếng Việt và **tiếng Nhật**; thử cả GPU và NPU |
 | `whisper-large-v3-int8` | Chất lượng cao nhất, chậm nhất |
 
 ### Dịch (LLM)
@@ -334,6 +343,14 @@ số câu dịch lỗi (`translation_fallback_lines`) và mã lỗi — **không
 | `qwen3-4b-int4` | ~2.5 GB | Máy ít RAM |
 | `qwen2.5-1.5b-instruct-int4` | ~1 GB | Bản nháp nhanh, cần soát kỹ |
 | `qwen3-0.6b-int4` | ~0.5 GB | Chỉ để kiểm tra luồng chạy; chất lượng dịch kém |
+
+### Tiếng Nhật
+
+- Chọn `Japanese` (hoặc `-Language ja`) thay vì `Auto detect` khi biết chắc video tiếng Nhật; tên file sẽ là `<tên>.ja.srt`.
+- Nên dùng `whisper-large-v3-turbo-int8` (hoặc `medium`). Ứng dụng hiện cảnh báo khi chọn tiny/base/small cho tiếng Nhật.
+- Phụ đề tiếng Nhật được cắt theo ký tự (tối đa 32 ký tự/câu), ưu tiên ngắt tại `。`, `、`, `！`, `？` hoặc khoảng trắng Whisper chèn giữa các câu.
+- Dịch Nhật → Anh/Việt: nên dùng `qwen3-8b-int4-cw` hoặc `qwen3-4b-int4`. Prompt dịch có quy tắc riêng: câu tiếng Nhật thường bị chia qua nhiều dòng, model dùng ngữ cảnh nhưng vẫn giữ **một dòng dịch cho mỗi dòng gốc**, giữ tên riêng, chuyển kính ngữ (さん, 様) cho tự nhiên.
+- Bản dịch lỗi của model nhỏ (lặp `1. 1. 1.`, trả về khung mẫu `N. text`) bị loại, dịch lại từng dòng, nếu vẫn lỗi thì giữ câu gốc và tăng `translation_fallback_lines`.
 
 ### Thiết bị
 
@@ -373,6 +390,7 @@ số câu dịch lỗi (`translation_fallback_lines`) và mã lỗi — **không
 | App desktop báo không tìm thấy worker | Kiểm tra `apps\inference\.venv` tồn tại, hoặc đặt `LOCALSUB_WORKER_DIR` / `LOCALSUB_WORKER_PYTHON` |
 | `npm run tauri dev` lỗi linker `link.exe` | Cài Visual Studio Build Tools với workload C++ (mục 2) |
 | Bản dịch sai hoặc giữ nguyên câu gốc | Dùng model 7–8B; xem `translation_fallback_lines` trong nhật ký; sửa tay trong bảng |
+| Phụ đề tiếng Nhật sai chữ Hán (ví dụ 決産 thay cho 決算) | Dùng `whisper-large-v3-turbo-int8` hoặc `whisper-medium-int8`; tiny/base/small hay nhầm đồng âm |
 | Thiếu RAM khi dịch | Chọn `qwen3-4b-int4`, đóng ứng dụng khác |
 | Script bị chặn | `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass` |
 
@@ -418,6 +436,7 @@ CI (GitHub Actions) chạy Python lint/test, frontend lint/type-check/test/build
 
 - 55 unit test Python (3.11 và 3.14), 12 test Vitest, test Rust (bao gồm chạy worker thật) đều đạt.
 - Đã chạy thật trên CPU (OpenVINO 2026.4): video 44 giây → 8 câu tiếng Anh → dịch tiếng Việt, xuất đủ 4 định dạng.
+- Đã chạy thật trên CPU: audio tiếng Nhật 19 giây, `--language auto` nhận đúng `ja`, whisper-small + qwen3-4b dịch sang tiếng Việt và tiếng Anh, 0 dòng fallback.
 - **Chưa kiểm chứng:** chạy trên NPU vật lý (Whisper và model dịch 8B) và `npm run tauri dev` trên Windows.
 
 ---

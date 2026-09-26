@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import re
 import time
+import unicodedata
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -27,7 +28,9 @@ TRANSLATION_CATALOG: dict[str, str] = {
     "qwen3-0.6b-int4": "OpenVINO/Qwen3-0.6B-int4-ov",
 }
 DEFAULT_TRANSLATION_MODEL = "qwen3-8b-int4-cw"
-LANGUAGE_NAMES = {"en": "English", "vi": "Vietnamese"}
+LANGUAGE_NAMES = {"en": "English", "ja": "Japanese", "vi": "Vietnamese"}
+SOURCE_LANGUAGES = ("en", "ja", "vi")
+TARGET_LANGUAGES = ("en", "vi")
 DEFAULT_BATCH_SIZE = 8
 CONTEXT_LINES = 2
 
@@ -129,6 +132,12 @@ def build_messages(
         "Translate each line on its own line, keep names, tickers and numbers unchanged, "
         "keep it short enough for subtitles, and add no notes or explanations."
     )
+    if source == "ja":
+        rules += (
+            " Japanese subtitle lines are often fragments of one sentence: use the surrounding "
+            "lines to understand them, but keep one output line per input line. Drop honorifics "
+            "such as -san only when unnatural, and keep Japanese personal and company names."
+        )
     body = ""
     if context:
         body += "Previous lines for context only (do not translate):\n"
@@ -141,7 +150,8 @@ def parse_numbered(output: str, expected: int) -> list[str | None]:
     text = _THINK.sub("", output).replace("<think>", "").replace("</think>", "")
     result: list[str | None] = [None] * expected
     for line in text.splitlines():
-        match = _NUMBERED.match(line)
+        # Japanese-aware models may number with full-width digits/punctuation ("１．").
+        match = _NUMBERED.match(unicodedata.normalize("NFKC", line))
         if not match:
             continue
         number = int(match.group(1))
@@ -175,6 +185,27 @@ def _generate(pipeline: Any, prompt: str, max_new_tokens: int) -> str:
         return str(pipeline.generate(prompt, max_new_tokens=max_new_tokens))
 
 
+_PLACEHOLDER = re.compile(r"^(?:N\s*[.)]\s*)?(?:text|translation)?\s*[.]?$", re.IGNORECASE)
+_LOOP = re.compile(r"(\S{1,12}?)(?:\s*\1){5,}")
+
+
+def plausible(value: str | None, source: str) -> str | None:
+    """Reject echoes of the prompt format and degenerate loops from small models."""
+    if value is None:
+        return None
+    text = value.strip()
+    if not text or _PLACEHOLDER.match(text) or text.upper().startswith("N. "):
+        return None
+    if _LOOP.search(text):  # "1. 1. 1. 1. ..." or a word repeated 6+ times
+        return None
+    letters = sum(ch.isalpha() for ch in text)
+    if letters == 0 and any(ch.isalpha() for ch in source):
+        return None
+    if len(text) > 4 * len(source) + 40:
+        return None
+    return text
+
+
 def translate_lines(
     translator: LoadedTranslator,
     lines: Sequence[str],
@@ -199,7 +230,9 @@ def translate_lines(
             raise LocalSubError(
                 ErrorCode.TRANSLATION_FAILED, f"LLM generation failed: {str(exc)[:200]}"
             ) from exc
-        return parse_numbered(raw, len(batch))
+        return [
+            plausible(v, src) for v, src in zip(parse_numbered(raw, len(batch)), batch, strict=True)
+        ]
 
     for offset in range(0, total, batch_size):
         batch = list(lines[offset : offset + batch_size])
@@ -217,6 +250,4 @@ def translate_lines(
         if on_progress:
             on_progress(min(offset + batch_size, total), total)
 
-    return TranslationResult(
-        tuple(output), fallbacks, int((time.perf_counter() - started) * 1000)
-    )
+    return TranslationResult(tuple(output), fallbacks, int((time.perf_counter() - started) * 1000))

@@ -109,10 +109,15 @@ def test_job_with_translation_writes_bilingual_outputs(tmp_path, settings, insta
     assert record.device and record.device.resolved == "NPU"
     assert record.translation_device and record.translation_device.resolved == "CPU"
     names = sorted(p.name for p in record.outputs)
-    assert names == sorted([
-        "Họp giao ban.vi.srt", "Họp giao ban.en.srt", "Họp giao ban.vi.vtt",
-        "Họp giao ban.en.vtt", "Họp giao ban.localsub.json",
-    ])
+    assert names == sorted(
+        [
+            "Họp giao ban.vi.srt",
+            "Họp giao ban.en.srt",
+            "Họp giao ban.vi.vtt",
+            "Họp giao ban.en.vtt",
+            "Họp giao ban.localsub.json",
+        ]
+    )
     en = (settings.output_dir / "Họp giao ban.en.srt").read_text(encoding="utf-8")
     assert "[vi] Xin chào" in en  # fake LLM marker proves the translated track was written
     progress = [e for e in events if e.get("type") == "progress"]
@@ -127,8 +132,12 @@ def test_job_translation_model_missing_fails_early(tmp_path, settings, installed
     calls: list = []
     record = run_job(
         settings,
-        JobRequest(source=make_source(tmp_path), language="vi", translate_to="en",
-                   translation_model="qwen3-0.6b-int4"),
+        JobRequest(
+            source=make_source(tmp_path),
+            language="vi",
+            translate_to="en",
+            translation_model="qwen3-0.6b-int4",
+        ),
         runtime_probe=probe_npu,
         ffmpeg_runner=lambda cmd, **kw: calls.append(cmd),
     )
@@ -139,8 +148,12 @@ def test_translate_to_same_language_skips_llm(tmp_path, settings, installed_mode
     install_llm(settings)
     record = run_job(
         settings,
-        JobRequest(source=make_source(tmp_path), language="vi", translate_to="vi",
-                   translation_model="qwen3-0.6b-int4"),
+        JobRequest(
+            source=make_source(tmp_path),
+            language="vi",
+            translate_to="vi",
+            translation_model="qwen3-0.6b-int4",
+        ),
         runtime_probe=probe_npu,
         pipeline_factory=lambda path, device, props: FakePipeline(),
         llm_factory=lambda *a: (_ for _ in ()).throw(AssertionError("LLM must not load")),
@@ -174,3 +187,62 @@ def test_prune_stale_temp_only_removes_old_wavs(tmp_path):
     os.utime(other, (0, 0))
     assert prune_stale_temp(tmp_path, now=STALE_TEMP_SECONDS + 10) == 1
     assert not old.exists() and fresh.exists() and other.exists()
+
+
+class JapanesePipeline(FakePipeline):
+    def generate(self, samples, **kwargs):
+        self.kwargs = kwargs
+
+        class Chunk:
+            def __init__(self, start, end, text):
+                self.start_ts, self.end_ts, self.text = start, end, text
+
+        class R:
+            chunks = [Chunk(0.0, 1.5, "こんにちは。"), Chunk(1.5, 3.0, "ありがとうございます。")]
+            texts = ["こんにちは。ありがとうございます。"]
+            language = "<|ja|>"
+
+        return R()
+
+
+def test_auto_detected_japanese_is_translated_to_vietnamese(tmp_path, settings, installed_model):
+    install_llm(settings)
+    pipeline = JapanesePipeline()
+    record = run_job(
+        settings,
+        JobRequest(
+            source=make_source(tmp_path),
+            language="auto",
+            translate_to="vi",
+            translation_model="qwen3-0.6b-int4",
+            translation_device="CPU",
+            formats=("srt", "json"),
+        ),
+        runtime_probe=probe_npu,
+        pipeline_factory=lambda path, device, props: pipeline,
+        llm_factory=lambda path, device, props: FakeLLM(),
+        ffmpeg_runner=fake_ffmpeg,
+    )
+    assert record.state == JobState.COMPLETED, record.error_message
+    assert record.detected_language == "ja"
+    names = sorted(p.name for p in record.outputs)
+    assert names == sorted(
+        ["Họp giao ban.ja.srt", "Họp giao ban.vi.srt", "Họp giao ban.localsub.json"]
+    )
+    project = json.loads((settings.output_dir / "Họp giao ban.localsub.json").read_text("utf-8"))
+    assert project["source_language"] == "ja" and project["target_language"] == "vi"
+    assert project["cues"][1]["translation"] == "[vi] ありがとうございます。"
+
+
+def test_explicit_japanese_language_token(tmp_path, settings, installed_model):
+    pipeline = JapanesePipeline()
+    record = run_job(
+        settings,
+        JobRequest(source=make_source(tmp_path), language="ja"),
+        runtime_probe=probe_npu,
+        pipeline_factory=lambda path, device, props: pipeline,
+        ffmpeg_runner=fake_ffmpeg,
+    )
+    assert record.state == JobState.COMPLETED, record.error_message
+    assert pipeline.kwargs["language"] == "<|ja|>"
+    assert record.outputs[0].name == "Họp giao ban.ja.srt"

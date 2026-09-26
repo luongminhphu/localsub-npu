@@ -1,6 +1,19 @@
 import type { JobView, LocalSubProject, ProjectCue, WorkerEvent } from "./types";
 
 export const MAX_CUE_CHARS = 84;
+/** Japanese: ~2 lines x 16 full-width characters (mirrors the worker's segmentation). */
+export const MAX_CUE_CHARS_CJK = 32;
+
+const CJK = /[\u3040-\u30ff\u31f0-\u31ff\u3400-\u4dbf\u4e00-\u9fff\uff66-\uff9f]/g;
+
+export function isCjk(text: string): boolean {
+  const dense = text.replace(/ /g, "");
+  return dense.length > 0 && (dense.match(CJK)?.length ?? 0) >= 0.3 * dense.length;
+}
+
+export function maxCharsFor(text: string): number {
+  return isCjk(text) ? MAX_CUE_CHARS_CJK : MAX_CUE_CHARS;
+}
 
 export interface CueIssue {
   index: number;
@@ -22,8 +35,12 @@ export function validateCues(cues: ProjectCue[]): CueIssue[] {
     if (prev && cue.start_ms < prev.end_ms) {
       issues.push({ index, severity: "error", message: "Overlaps the previous cue" });
     }
-    if (cue.text.length > MAX_CUE_CHARS || (cue.translation?.length ?? 0) > MAX_CUE_CHARS) {
-      issues.push({ index, severity: "warning", message: `Longer than ${MAX_CUE_CHARS} characters` });
+    for (const value of [cue.text, cue.translation ?? ""]) {
+      const limit = maxCharsFor(value);
+      if (value.length > limit) {
+        issues.push({ index, severity: "warning", message: `Longer than ${limit} characters` });
+        break;
+      }
     }
   });
   return issues;

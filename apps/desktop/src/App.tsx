@@ -46,6 +46,7 @@ const DEVICES: Array<{ value: DevicePreference; label: string }> = [
   { value: "GPU", label: "GPU" },
   { value: "CPU", label: "CPU" },
 ];
+const JA_WEAK_MODELS = new Set(["whisper-tiny-int8", "whisper-base-int8", "whisper-small-int8"]);
 const FORMATS: ExportFormat[] = ["srt", "vtt", "txt", "json"];
 const STEPS: Array<{ stage: WorkerStage; label: string }> = [
   { stage: "probing", label: "Check" },
@@ -215,7 +216,7 @@ export function App() {
         <div>
           <p className="eyebrow">LOCAL · PRIVATE · WINDOWS 11</p>
           <h1>LocalSub NPU</h1>
-          <p className="subtitle">Offline subtitles and EN↔VI translation on the Intel NPU.</p>
+          <p className="subtitle">Offline subtitles and EN↔VI, JA → EN/VI translation on the Intel NPU.</p>
         </div>
         <span className={`status-chip${bridge?.preview ? " preview" : ""}`}>
           {bridge?.preview ? "Browser preview · sample data" : "Desktop · Wave 3"}
@@ -243,6 +244,7 @@ export function App() {
               <select id="language" value={language} onChange={(e) => setLanguage(e.target.value as SpokenLanguage)}>
                 <option value="auto">Auto detect</option>
                 <option value="en">English</option>
+                <option value="ja">Japanese</option>
                 <option value="vi">Vietnamese</option>
               </select>
             </div>
@@ -268,6 +270,9 @@ export function App() {
               </select>
             </div>
             <p className="help-text">{WHISPER_MODELS.find((m) => m.id === model)?.hint} Auto = NPU → GPU → CPU.</p>
+            {language === "ja" && JA_WEAK_MODELS.has(model) && (
+              <p className="warn">For Japanese, whisper-large-v3-turbo-int8 (or medium) is recommended for accuracy.</p>
+            )}
           </div>
           {translateTo && (
             <div className="field-group">

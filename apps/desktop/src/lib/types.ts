@@ -1,5 +1,5 @@
 export type DevicePreference = "auto" | "NPU" | "GPU" | "CPU";
-export type SpokenLanguage = "auto" | "en" | "vi";
+export type SpokenLanguage = "auto" | "en" | "ja" | "vi";
 export type TargetLanguage = "" | "en" | "vi";
 export type ExportFormat = "srt" | "vtt" | "txt" | "json";
 export type WorkerStage =

@@ -12,7 +12,7 @@
 [CmdletBinding()]
 param(
   [Parameter(Mandatory = $true)][string]$Source,
-  [ValidateSet("auto", "en", "vi")][string]$Language = "auto",
+  [ValidateSet("auto", "en", "ja", "vi")][string]$Language = "auto",
   [ValidateSet("transcribe", "translate")][string]$Task = "transcribe",
   [ValidateSet("auto", "NPU", "GPU", "CPU")][string]$Device = "auto",
   [string]$Model = "whisper-small-int8",

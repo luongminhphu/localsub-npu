@@ -57,7 +57,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     tr.add_argument("--model", default=whisper.DEFAULT_MODEL, choices=sorted(whisper.MODEL_CATALOG))
     tr.add_argument("--device", choices=DEVICES, help="Override OPENVINO_DEVICE for Whisper")
-    tr.add_argument("--translate-to", choices=["vi", "en"], help="Add a translated track (LLM)")
+    tr.add_argument(
+        "--translate-to",
+        choices=list(translation.TARGET_LANGUAGES),
+        help="Add a translated track (LLM)",
+    )
     tr.add_argument(
         "--translation-model",
         default=translation.DEFAULT_TRANSLATION_MODEL,
@@ -70,8 +74,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     tl = sub.add_parser("translate", help="Translate an existing SRT file with the local LLM")
     tl.add_argument("source", type=Path)
-    tl.add_argument("--from", dest="source_language", choices=["vi", "en"], required=True)
-    tl.add_argument("--to", dest="target_language", choices=["vi", "en"], required=True)
+    tl.add_argument(
+        "--from", dest="source_language", choices=list(translation.SOURCE_LANGUAGES), required=True
+    )
+    tl.add_argument(
+        "--to", dest="target_language", choices=list(translation.TARGET_LANGUAGES), required=True
+    )
     tl.add_argument(
         "--model",
         default=translation.DEFAULT_TRANSLATION_MODEL,
@@ -91,8 +99,9 @@ def build_parser() -> argparse.ArgumentParser:
 def _with_device(settings: Settings, device: str | None) -> Settings:
     if not device:
         return settings
-    return Settings(device, settings.ffmpeg_path, settings.output_dir, settings.model_dir,
-                    settings.log_level)
+    return Settings(
+        device, settings.ffmpeg_path, settings.output_dir, settings.model_dir, settings.log_level
+    )
 
 
 def _event_printer(events: bool):
@@ -153,8 +162,10 @@ def _cmd_transcribe(args: argparse.Namespace, settings: Settings) -> int:
         "error_message": record.error_message,
     }
     if args.events:
-        print(json.dumps(to_jsonable({"type": "summary", "summary": summary}),
-                         ensure_ascii=False), flush=True)
+        print(
+            json.dumps(to_jsonable({"type": "summary", "summary": summary}), ensure_ascii=False),
+            flush=True,
+        )
     else:
         _print_json(summary)
     return 0 if record.state == JobState.COMPLETED else 1
@@ -175,7 +186,11 @@ def _cmd_translate(args: argparse.Namespace, settings: Settings) -> int:
     )
     _, available = _openvino_version()
     translator = translation.load_translator(
-        path, args.model, settings.device_preference, settings.preferred_devices(), available,
+        path,
+        args.model,
+        settings.device_preference,
+        settings.preferred_devices(),
+        available,
         cache_dir=settings.model_dir / ".ov-cache",
     )
     emit({"type": "state", "state": JobState.TRANSLATING, "device": translator.device.resolved})
@@ -192,12 +207,10 @@ def _cmd_translate(args: argparse.Namespace, settings: Settings) -> int:
         cues, list(result.lines), args.source_language, args.target_language, None
     )
     stem = source.name[: -len(".srt")] if source.name.lower().endswith(".srt") else source.stem
-    for lang in ("vi", "en"):
+    for lang in translation.SOURCE_LANGUAGES:
         if stem.endswith(f".{lang}"):
             stem = stem[: -len(lang) - 1]
-    outputs = export_project(
-        project, source.with_name(stem), args.formats, include_source=False
-    )
+    outputs = export_project(project, source.with_name(stem), args.formats, include_source=False)
     _print_json(
         {
             "outputs": outputs,
