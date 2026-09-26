@@ -19,6 +19,8 @@ export interface CueIssue {
   index: number;
   message: string;
   severity: "error" | "warning";
+  code: "timing" | "empty" | "overlap" | "too_long";
+  limit?: number;
 }
 
 /** Mirrors the worker's validate_cues so export errors are caught before saving. */
@@ -26,19 +28,25 @@ export function validateCues(cues: ProjectCue[]): CueIssue[] {
   const issues: CueIssue[] = [];
   cues.forEach((cue, index) => {
     if (!(cue.end_ms > cue.start_ms) || cue.start_ms < 0) {
-      issues.push({ index, severity: "error", message: "End must be after start" });
+      issues.push({ index, severity: "error", code: "timing", message: "End must be after start" });
     }
     if (!cue.text.trim()) {
-      issues.push({ index, severity: "error", message: "Source text is empty" });
+      issues.push({ index, severity: "error", code: "empty", message: "Source text is empty" });
     }
     const prev = cues[index - 1];
     if (prev && cue.start_ms < prev.end_ms) {
-      issues.push({ index, severity: "error", message: "Overlaps the previous cue" });
+      issues.push({ index, severity: "error", code: "overlap", message: "Overlaps the previous cue" });
     }
     for (const value of [cue.text, cue.translation ?? ""]) {
       const limit = maxCharsFor(value);
       if (value.length > limit) {
-        issues.push({ index, severity: "warning", message: `Longer than ${limit} characters` });
+        issues.push({
+          index,
+          severity: "warning",
+          code: "too_long",
+          limit,
+          message: `Longer than ${limit} characters`,
+        });
         break;
       }
     }

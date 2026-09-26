@@ -142,6 +142,8 @@ describe("Japanese cue limits", () => {
       { start_ms: 0, end_ms: 1000, text: ja, translation: "Hello" },
       { start_ms: 1000, end_ms: 2000, text: latin, translation: null },
     ]);
-    expect(issues).toEqual([{ index: 0, severity: "warning", message: "Longer than 32 characters" }]);
+    expect(issues).toEqual([
+      { index: 0, severity: "warning", code: "too_long", limit: 32, message: "Longer than 32 characters" },
+    ]);
   });
 });

@@ -30,6 +30,17 @@ An idle NPU showing 0% is normal. A valid verification requires a real inference
 
 Run `python -m app.main models download <model-id>` from `apps/inference`, or `.\scripts\setup-wave2.ps1 -Model <model-id>`. Confirm `LOCALSUB_MODEL_DIR` points to the same folder for download and transcription.
 
+## `MODEL_INCOMPLETE` / `DOWNLOAD_FAILED`
+
+The model folder exists but the download did not finish (missing `.bin` weights or leftover `*.incomplete`
+files). Press **Resume** (Tải tiếp) in the Models section, or run `models download <model-id>` again: Hugging Face
+resumes the partial files. A finished download writes `.localsub-model.json` in the model folder.
+
+## `INSUFFICIENT_DISK`
+
+The worker needs the model size plus 10% free in `LOCALSUB_MODEL_DIR`. Free space or point the variable to
+another drive.
+
 ## `MODEL_COMPILE_FAILED` on NPU
 
 - Update the Intel NPU driver (Lenovo Vantage / Intel driver page) and reboot.

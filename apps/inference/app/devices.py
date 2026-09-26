@@ -90,12 +90,43 @@ def compile_with_fallback(
     )
 
 
+MARKER_FILE = ".localsub-model.json"
+
+
+def ir_status(path: Path, required: Sequence[str]) -> str:
+    """Return "installed", "incomplete" or "missing" for an OpenVINO IR model folder.
+
+    Every required XML must have its weights (.bin). Downloads made by this app finish with a
+    marker file; older folders without the marker count as installed only when Hugging Face
+    left no partial file (``*.incomplete``). Wave 3 regression: a half-downloaded model passed
+    the XML check and then failed with MODEL_COMPILE_FAILED.
+    """
+    if not path.is_dir():
+        return "missing"
+    for name in required:
+        xml = path / name
+        if not xml.is_file() or not xml.with_suffix(".bin").is_file():
+            return "incomplete"
+    if (path / MARKER_FILE).is_file():
+        return "installed"
+    cache = path / ".cache" / "huggingface" / "download"
+    if cache.is_dir() and any(cache.glob("*.incomplete")):
+        return "incomplete"
+    return "installed"
+
+
 def ensure_ir_present(path: Path, required: Sequence[str], model_id: str, command: str) -> Path:
-    missing = [name for name in required if not (path / name).is_file()]
-    if missing:
+    status = ir_status(path, required)
+    if status == "missing":
         raise LocalSubError(
             ErrorCode.MODEL_NOT_FOUND,
             f"Model '{model_id}' not found at {path}. Run: python -m app.main {command} {model_id}",
+        )
+    if status == "incomplete":
+        raise LocalSubError(
+            ErrorCode.MODEL_INCOMPLETE,
+            f"Model '{model_id}' at {path} is only partly downloaded. "
+            f"Run again to resume: python -m app.main {command} {model_id}",
         )
     return path
 

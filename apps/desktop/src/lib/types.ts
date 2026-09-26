@@ -93,10 +93,74 @@ export interface Diagnostics {
   installed_models: string[];
 }
 
+export type ModelStatus = "installed" | "incomplete" | "missing";
+
 export interface ModelInfo {
   id: string;
   kind: "asr" | "translation";
   source: string;
+  status: ModelStatus;
   installed: boolean;
+  size_bytes: number;
+  approx_size_mb: number | null;
   path: string;
+}
+
+/** JSON Lines emitted by `models download --events`. */
+export interface DownloadEvent {
+  type: "download" | "summary" | "error";
+  state?: "downloading" | "completed";
+  model_id?: string;
+  downloaded_bytes?: number;
+  total_bytes?: number | null;
+  already_installed?: boolean;
+  status?: ModelStatus;
+  error_code?: string;
+  error_message?: string;
+}
+
+export interface DownloadHandlers {
+  onEvent: (event: DownloadEvent) => void;
+  onExit: (code: number | null, cancelled: boolean) => void;
+}
+
+export interface HistoryDevice {
+  requested: string | null;
+  resolved: string | null;
+  fallback_reason: string | null;
+}
+
+export interface HistoryJob {
+  job_id: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+  state: string | null;
+  source_name: string | null;
+  language: string | null;
+  detected_language: string | null;
+  translate_to: string | null;
+  model_id: string | null;
+  translation_model: string | null;
+  device: HistoryDevice | null;
+  translation_device: HistoryDevice | null;
+  source_duration_ms: number | null;
+  total_ms: number | null;
+  real_time_factor: number | null;
+  cue_count: number | null;
+  translation_fallback_lines: number | null;
+  error_code: string | null;
+}
+
+export interface JobHistory {
+  log_path: string;
+  jobs: HistoryJob[];
+  skipped_lines: number;
+  stats: {
+    total: number;
+    completed: number;
+    failed: number;
+    npu_share: number | null;
+    fallbacks: number;
+    median_rtf: number | null;
+  };
 }

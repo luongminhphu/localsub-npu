@@ -122,15 +122,27 @@ Khi hoàn tất, script in kết quả chẩn đoán (phiên bản OpenVINO, dan
 
 ## 4. Tải model
 
-Model được lưu trong `data\models\<model-id>` (đã nằm trong `.gitignore`). Có thể tải thêm bất cứ lúc nào:
+Model được lưu trong `data\models\<model-id>` (đã nằm trong `.gitignore`).
+
+**Cách dễ nhất (từ Wave 4):** mở app desktop, vào mục **Model** ở cuối trang, bấm **Tải về** cạnh model cần dùng.
+App hiện thanh tiến trình (MB đã tải / tổng), có nút **Dừng**. Model tải dở hiện trạng thái **Tải dở** và nút
+**Tải tiếp** — lần tải sau tiếp tục từ phần đã có, không tải lại từ đầu. Trước khi tải, app kiểm tra ổ đĩa còn đủ
+chỗ (dung lượng model + 10%). Nút **Xóa** hỏi xác nhận rồi mới xóa thư mục model.
+
+Hoặc dùng dòng lệnh:
 
 ```powershell
 cd apps\inference
-.\.venv\Scripts\python.exe -m app.main models list                         # xem model và trạng thái đã cài
+.\.venv\Scripts\python.exe -m app.main models list                         # trạng thái: installed / incomplete / missing
 .\.venv\Scripts\python.exe -m app.main models download whisper-large-v3-turbo-int8
-.\.venv\Scripts\python.exe -m app.main models download qwen3-8b-int4-cw
+.\.venv\Scripts\python.exe -m app.main models download qwen3-8b-int4-cw   # bị ngắt thì chạy lại để tải tiếp
+.\.venv\Scripts\python.exe -m app.main models remove qwen3-0.6b-int4      # xóa model không dùng
 cd ..\..
 ```
+
+Một model chỉ được coi là **đã cài** khi đủ các file `.xml` kèm file trọng số `.bin` tương ứng và việc tải
+đã hoàn tất (app ghi file đánh dấu `.localsub-model.json`). Model tải dở báo lỗi `MODEL_INCOMPLETE` thay vì
+lỗi biên dịch khó hiểu như trước. Mỗi lần tải/xóa được ghi vào `data\models\logs\models.jsonl`.
 
 > Khi chạy lệnh worker trực tiếp (không qua script), hãy đặt thư mục dữ liệu để dùng chung với app desktop:
 > `$env:LOCALSUB_MODEL_DIR="$PWD\data\models"; $env:LOCALSUB_OUTPUT_DIR="$PWD\data\output"` (chạy ở thư mục gốc repo),
@@ -189,50 +201,70 @@ Nếu cài bản đóng gói ra thư mục khác, đặt biến môi trường t
 
 ## 7. Sử dụng ứng dụng desktop
 
-Giao diện hiện đang bằng tiếng Anh. Quy trình gồm 3 bảng bên trái và bảng sửa phụ đề bên phải.
+Giao diện mặc định bằng **tiếng Việt**; bấm **VI / EN** ở góc trên bên phải để đổi sang tiếng Anh (lựa chọn được
+ghi nhớ). Trang gồm 3 bảng cấu hình, thanh chạy, bảng sửa phụ đề, mục **Model** và mục **Lịch sử xử lý**.
+Tên nút trong tài liệu dưới đây ghi theo giao diện tiếng Việt, kèm tên tiếng Anh trong ngoặc.
 
 ### Bước 1 — Media
 
-- Bấm **Choose video or audio** và chọn file (MP4, MKV, MOV, AVI, WEBM, MP3, WAV, M4A).
-- Hoặc bấm **Open saved project (.localsub.json)** để mở lại phụ đề đã lưu và sửa tiếp.
+- Bấm **Chọn video hoặc audio** (Choose video or audio) và chọn file (MP4, MKV, MOV, AVI, WEBM, MP3, WAV, M4A).
+- Hoặc bấm **Mở project đã lưu** (Open saved project) để mở lại phụ đề đã lưu và sửa tiếp.
 
-### Bước 2 — Configure
+### Bước 2 — Cấu hình (Configure)
 
 | Mục | Chọn |
 |---|---|
-| **Spoken language** | Ngôn ngữ nói trong video: `Vietnamese`, `English`, `Japanese` hoặc `Auto detect` |
-| **Speech model · device** | Model Whisper và thiết bị (`auto`, `NPU`, `GPU`, `CPU`) |
-| **Translate to** | `No translation`, hoặc ngôn ngữ đích (Việt/Anh) để tạo thêm bản dịch |
-| **Translation model · device** | Model dịch và thiết bị (hiện khi có chọn dịch) |
-| **Export formats** | Tick SRT / VTT / TXT / JSON |
+| **Ngôn ngữ nói** | Ngôn ngữ trong video: Tiếng Việt, Tiếng Anh, Tiếng Nhật hoặc Tự nhận diện |
+| **Model nhận dạng · thiết bị** | Model Whisper và thiết bị (Tự động, NPU, GPU, CPU) |
+| **Dịch sang** | Không dịch, hoặc ngôn ngữ đích (Việt/Anh) để tạo thêm bản dịch |
+| **Model dịch · thiết bị** | Model dịch và thiết bị (hiện khi có chọn dịch) |
+| **Định dạng xuất** | Tick SRT / VTT / TXT / JSON |
 
-Nếu model chưa được tải, ứng dụng hiện dòng **Download first: …** kèm lệnh cần chạy, và nút chạy bị khóa.
+Trong danh sách model, model chưa có được ghi **(chưa tải)** hoặc **(tải dở)**. Khi đó ứng dụng hiện dòng
+**Cần tải model trước: …** và nút chạy bị khóa — tải model trong mục **Model** bên dưới.
 
-### Bước 3 — Runtime
+### Bước 3 — Môi trường chạy (Runtime)
 
-Hiện phiên bản OpenVINO, FFmpeg, danh sách thiết bị khả dụng và thiết bị mà `auto` sẽ chọn.
-Bấm **Re-check** sau khi cài driver hoặc tải model.
+Hiện phiên bản OpenVINO, FFmpeg, danh sách thiết bị khả dụng, thiết bị mà `auto` sẽ chọn và thời điểm kiểm tra
+(giờ máy, kèm múi giờ). Bấm **Kiểm tra lại** sau khi cài driver hoặc FFmpeg.
 
 ### Chạy
 
-- Bấm **Generate subtitles**. Thanh tiến trình đi qua các bước: kiểm tra file → tách âm thanh → nạp model →
+- Bấm **Tạo phụ đề** (Generate subtitles). Thanh tiến trình đi qua các bước: kiểm tra file → tách âm thanh → nạp model →
   nhận dạng → dịch (hiện số câu đã dịch / tổng) → ghi file.
-- Khi xong, ứng dụng hiện **Speech used** và **Translation used** — thiết bị thực tế đã chạy (kèm lý do nếu phải chuyển sang GPU/CPU).
-- Bấm **Cancel** để dừng; file cũ không bị thay đổi.
+- Khi xong, ứng dụng hiện **Nhận dạng dùng** và **Dịch dùng** — thiết bị thực tế đã chạy (kèm lý do nếu phải chuyển sang GPU/CPU).
+- Bấm **Hủy** để dừng; file cũ không bị thay đổi.
+- Lỗi được hiển thị bằng câu dễ hiểu kèm mã lỗi gốc, ví dụ model tải dở → "Model mới tải dở. Bấm Tải tiếp…".
 
 ### Sửa phụ đề
 
-- Sửa trực tiếp cột thời gian (**Start**, **End**, định dạng `hh:mm:ss,mmm`), **Source** và **Translation**.
-- **Split**: tách câu làm đôi tại điểm giữa. **Merge**: gộp với câu kế tiếp. **Delete**: xóa câu.
+- Sửa trực tiếp cột thời gian (**Bắt đầu**, **Kết thúc**, định dạng `hh:mm:ss,mmm`), **Gốc** và **Bản dịch**.
+- **Tách**: tách câu làm đôi tại điểm giữa. **Gộp**: gộp với câu kế tiếp. **Xóa**: xóa câu.
 - Ứng dụng kiểm tra liên tục: thời gian chồng nhau, End trước Start, câu trống, câu dài hơn 84 ký tự
   (tiếng Nhật: 32 ký tự).
   Lỗi nghiêm trọng sẽ chặn nút xuất; dòng có lỗi được tô màu.
-- Nhãn **unsaved** cho biết có thay đổi chưa xuất.
+- Nhãn **chưa lưu** cho biết có thay đổi chưa xuất.
 
 ### Xuất file
 
-Bấm **Export SRT + JSON …** (tên nút thay đổi theo định dạng đã chọn), chọn thư mục và tên file.
+Bấm **Xuất SRT + JSON …** (tên nút thay đổi theo định dạng đã chọn), chọn thư mục và tên file.
 Mỗi ngôn ngữ ra một file riêng, ví dụ `talk.en.srt`, `talk.vi.srt`, kèm `talk.localsub.json` để mở lại sau.
+
+### Quản lý model
+
+Mục **Model** liệt kê 6 model nhận dạng và 5 model dịch với trạng thái **Đã cài / Tải dở / Chưa tải**, dung lượng
+thực tế (hoặc ước tính `~` khi chưa tải) và nhãn **Đang chọn** cho model đang dùng trong cấu hình. Mỗi lúc chỉ tải
+một model; có thể tải model trong khi đang chạy job khác. Không xóa được model đang được job sử dụng.
+
+### Lịch sử xử lý
+
+Mục **Lịch sử xử lý** đọc 10 job gần nhất từ `data\output\logs\jobs.jsonl` (tự làm mới sau mỗi job):
+thời gian bắt đầu (giờ máy, cột ghi múi giờ, ví dụ GMT+7), tên file, ngôn ngữ, thiết bị nhận dạng / dịch
+(dấu `*` = đã chuyển thiết bị, rê chuột để xem lý do), thời lượng media, RTF và trạng thái (kèm mã lỗi).
+Dòng tổng hợp cho biết tỉ lệ thành công, tỉ lệ chạy trên NPU, RTF trung vị và số lần chuyển thiết bị.
+RTF = thời gian xử lý / thời lượng media; nhỏ hơn 1 là nhanh hơn thời gian thực. Dòng "Cập nhật lúc …" chuyển
+sang màu vàng khi dữ liệu cũ hơn 2 phút. Lịch sử chỉ chứa metadata — không có nội dung phụ đề hay đường dẫn đầy đủ.
+Dòng lệnh tương đương: `python -m app.main history --limit 20`.
 
 ---
 
@@ -386,7 +418,10 @@ số câu dịch lỗi (`translation_fallback_lines`) và mã lỗi — **không
 | Không thấy `NPU` trong diagnostics | Cập nhật Intel NPU driver, khởi động lại, kiểm tra Task Manager có NPU 0 |
 | `DEVICE_UNAVAILABLE` khi chọn NPU | Dùng `-Device auto` để xem lý do chuyển thiết bị trong kết quả |
 | Lần đầu chạy NPU rất lâu | Bình thường (biên dịch model). Không xóa `data\models\.ov-cache` |
-| `MODEL_NOT_FOUND` / app hiện "Download first" | Chạy lệnh `models download <id>` được gợi ý |
+| `MODEL_NOT_FOUND` / app hiện "Cần tải model trước" | Tải model trong mục **Model** (hoặc `models download <id>`) |
+| `MODEL_INCOMPLETE` / model hiện "Tải dở" | Bấm **Tải tiếp** (hoặc chạy lại `models download <id>`); phần đã tải được giữ lại |
+| `DOWNLOAD_FAILED` | Mạng bị ngắt khi tải; kiểm tra mạng/proxy rồi bấm **Tải tiếp** |
+| `INSUFFICIENT_DISK` | Giải phóng ổ đĩa, hoặc đặt `LOCALSUB_MODEL_DIR` sang ổ khác |
 | App desktop báo không tìm thấy worker | Kiểm tra `apps\inference\.venv` tồn tại, hoặc đặt `LOCALSUB_WORKER_DIR` / `LOCALSUB_WORKER_PYTHON` |
 | `npm run tauri dev` lỗi linker `link.exe` | Cài Visual Studio Build Tools với workload C++ (mục 2) |
 | Bản dịch sai hoặc giữ nguyên câu gốc | Dùng model 7–8B; xem `translation_fallback_lines` trong nhật ký; sửa tay trong bảng |
@@ -434,7 +469,10 @@ CI (GitHub Actions) chạy Python lint/test, frontend lint/type-check/test/build
 
 ### Trạng thái kiểm chứng
 
-- 55 unit test Python (3.11 và 3.14), 12 test Vitest, test Rust (bao gồm chạy worker thật) đều đạt.
+- 88 unit test Python (3.11 và 3.14), 24 test Vitest, 4 test Rust (thêm 1 test chạy worker thật) đều đạt.
+- Đã tải thật `whisper-base-int8`: ngắt giữa chừng → trạng thái `incomplete` và job báo `MODEL_INCOMPLETE` →
+  chạy lại tải tiếp → `installed` → nhận dạng thành công. Kiểm tra dung lượng ổ đĩa đã chặn đúng khi ổ gần đầy.
+- Kiểm tra giao diện bằng Playwright (bản xem trước): tải/dừng/xóa model, lịch sử, đổi VI/EN, màn hình 390 px.
 - Đã chạy thật trên CPU (OpenVINO 2026.4): video 44 giây → 8 câu tiếng Anh → dịch tiếng Việt, xuất đủ 4 định dạng.
 - Đã chạy thật trên CPU: audio tiếng Nhật 19 giây, `--language auto` nhận đúng `ja`, whisper-small + qwen3-4b dịch sang tiếng Việt và tiếng Anh, 0 dòng fallback.
 - **Chưa kiểm chứng:** chạy trên NPU vật lý (Whisper và model dịch 8B) và `npm run tauri dev` trên Windows.

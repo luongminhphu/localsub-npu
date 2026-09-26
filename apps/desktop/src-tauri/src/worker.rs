@@ -141,7 +141,11 @@ fn allowed(field: &str, value: &str, list: &[&str]) -> Result<(), String> {
 }
 
 fn model_id(field: &str, value: &str) -> Result<(), String> {
-    let ok = !value.is_empty()
+    // First char alphanumeric: rejects "..", ".hidden" and other path tricks.
+    let ok = value
+        .chars()
+        .next()
+        .is_some_and(|c| c.is_ascii_alphanumeric())
         && value.len() <= 64
         && value
             .chars()
@@ -151,6 +155,22 @@ fn model_id(field: &str, value: &str) -> Result<(), String> {
     } else {
         Err(format!("invalid {field}: {value}"))
     }
+}
+
+/// Validated model id for `models download|remove`; the worker re-checks it against its catalog.
+pub fn model_id_arg(value: &str) -> Result<String, String> {
+    model_id("model_id", value)?;
+    Ok(value.to_string())
+}
+
+pub fn download_args(value: &str) -> Result<Vec<String>, String> {
+    let id = model_id_arg(value)?;
+    Ok(vec![
+        "models".into(),
+        "download".into(),
+        id,
+        "--events".into(),
+    ])
 }
 
 pub fn formats_arg(formats: &[String]) -> Result<String, String> {
@@ -253,6 +273,26 @@ mod tests {
     fn accepts_japanese_as_spoken_language_only() {
         assert!(allowed("language", "ja", LANGUAGES).is_ok());
         assert!(allowed("translate_to", "ja", TARGETS).is_err());
+    }
+
+    #[test]
+    fn validates_model_ids_for_download_and_remove() {
+        assert_eq!(
+            download_args("whisper-base-int8").unwrap(),
+            vec!["models", "download", "whisper-base-int8", "--events"]
+        );
+        for bad in [
+            "",
+            "..",
+            ".x",
+            "../etc",
+            "a/b",
+            "a\\b",
+            "a b",
+            &"x".repeat(65),
+        ] {
+            assert!(model_id_arg(bad).is_err(), "accepted {bad:?}");
+        }
     }
 
     #[test]

@@ -36,4 +36,5 @@ def installed_model(settings: Settings) -> Path:
     names = ("openvino_encoder_model.xml", "openvino_decoder_model.xml", "openvino_tokenizer.xml")
     for name in names:
         (path / name).write_text("<xml/>")
+        (path / name).with_suffix(".bin").write_bytes(b"\0")
     return path

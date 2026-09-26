@@ -14,6 +14,12 @@ struct JobState {
     child: Arc<Mutex<Option<Child>>>,
 }
 
+/// Model downloads use their own slot so a download never blocks (or cancels) a job.
+#[derive(Default)]
+struct DownloadState {
+    child: Arc<Mutex<Option<Child>>>,
+}
+
 #[derive(Clone, serde::Serialize)]
 struct ExitPayload {
     code: Option<i32>,
@@ -64,19 +70,21 @@ async fn list_models() -> Result<String, String> {
         .map_err(|e| e.to_string())?
 }
 
-#[tauri::command]
-fn start_job(
+/// Spawn the worker, stream stdout lines as `event` and stderr as `log`, emit `exit` at the end.
+fn spawn_streaming(
     app: AppHandle,
-    state: State<'_, JobState>,
-    job: worker::JobArgs,
+    slot_ref: &Arc<Mutex<Option<Child>>>,
+    args: Vec<String>,
+    names: (&'static str, &'static str, &'static str),
+    busy: &str,
 ) -> Result<(), String> {
-    let mut slot = state.child.lock().map_err(|_| "job lock poisoned")?;
+    let (event, log, exit) = names;
+    let mut slot = slot_ref.lock().map_err(|_| "worker lock poisoned")?;
     if let Some(child) = slot.as_mut() {
         if child.try_wait().map_err(|e| e.to_string())?.is_none() {
-            return Err("a job is already running".into());
+            return Err(busy.to_string());
         }
     }
-    let args = worker::transcribe_args(&job)?;
     let location = worker::locate()?;
     let mut child = worker::command(&location, &args)
         .spawn()
@@ -88,15 +96,15 @@ fn start_job(
     let log_app = app.clone();
     thread::spawn(move || {
         for line in BufReader::new(stderr).lines().map_while(Result::ok) {
-            let _ = log_app.emit("job-log", line);
+            let _ = log_app.emit(log, line);
         }
     });
 
-    let shared = Arc::clone(&state.child);
+    let shared = Arc::clone(slot_ref);
     thread::spawn(move || {
         for line in BufReader::new(stdout).lines().map_while(Result::ok) {
             if !line.trim().is_empty() {
-                let _ = app.emit("job-event", line);
+                let _ = app.emit(event, line);
             }
         }
         let status = shared
@@ -114,14 +122,13 @@ fn start_job(
                 cancelled: true,
             },
         };
-        let _ = app.emit("job-exit", payload);
+        let _ = app.emit(exit, payload);
     });
     Ok(())
 }
 
-#[tauri::command]
-fn cancel_job(state: State<'_, JobState>) -> Result<bool, String> {
-    let mut slot = state.child.lock().map_err(|_| "job lock poisoned")?;
+fn kill_slot(slot_ref: &Arc<Mutex<Option<Child>>>) -> Result<bool, String> {
+    let mut slot = slot_ref.lock().map_err(|_| "worker lock poisoned")?;
     match slot.as_mut() {
         Some(child) => {
             child.kill().map_err(|e| e.to_string())?;
@@ -131,6 +138,69 @@ fn cancel_job(state: State<'_, JobState>) -> Result<bool, String> {
         }
         None => Ok(false),
     }
+}
+
+#[tauri::command]
+fn start_job(
+    app: AppHandle,
+    state: State<'_, JobState>,
+    job: worker::JobArgs,
+) -> Result<(), String> {
+    let args = worker::transcribe_args(&job)?;
+    spawn_streaming(
+        app,
+        &state.child,
+        args,
+        ("job-event", "job-log", "job-exit"),
+        "a job is already running",
+    )
+}
+
+#[tauri::command]
+fn cancel_job(state: State<'_, JobState>) -> Result<bool, String> {
+    kill_slot(&state.child)
+}
+
+#[tauri::command]
+fn download_model(
+    app: AppHandle,
+    state: State<'_, DownloadState>,
+    model_id: String,
+) -> Result<(), String> {
+    let args = worker::download_args(&model_id)?;
+    spawn_streaming(
+        app,
+        &state.child,
+        args,
+        ("download-event", "download-log", "download-exit"),
+        "a model download is already running",
+    )
+}
+
+#[tauri::command]
+fn cancel_download(state: State<'_, DownloadState>) -> Result<bool, String> {
+    // Partial files stay on disk; the next download of the same model resumes them.
+    kill_slot(&state.child)
+}
+
+#[tauri::command]
+async fn remove_model(model_id: String) -> Result<String, String> {
+    let model_id = worker::model_id_arg(&model_id)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        run_to_string(&["models".into(), "remove".into(), model_id], None)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn job_history(limit: u32) -> Result<String, String> {
+    let limit = limit.clamp(1, 200).to_string();
+    tauri::async_runtime::spawn_blocking(move || {
+        run_to_string(&["history".into(), "--limit".into(), limit], None)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -171,12 +241,17 @@ fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(JobState::default())
+        .manage(DownloadState::default())
         .invoke_handler(tauri::generate_handler![
             worker_location,
             run_diagnostics,
             list_models,
             start_job,
             cancel_job,
+            download_model,
+            cancel_download,
+            remove_model,
+            job_history,
             export_project,
             load_project
         ])
