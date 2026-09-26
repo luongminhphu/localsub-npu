@@ -62,3 +62,58 @@ def render_srt(cues: Iterable[SubtitleCue]) -> str:
         )
 
     return "\n".join(lines).rstrip() + ("\n" if lines else "")
+
+
+def format_vtt_timestamp(milliseconds: int) -> str:
+    return format_srt_timestamp(milliseconds).replace(",", ".")
+
+
+def render_vtt(cues: Iterable[SubtitleCue]) -> str:
+    lines = ["WEBVTT", ""]
+    for cue in validate_cues(cues):
+        lines.extend(
+            [
+                str(cue.index),
+                f"{format_vtt_timestamp(cue.start_ms)} --> {format_vtt_timestamp(cue.end_ms)}",
+                cue.text,
+                "",
+            ]
+        )
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def render_txt(cues: Iterable[SubtitleCue]) -> str:
+    return "".join(f"{cue.text}\n" for cue in validate_cues(cues))
+
+
+_SRT_TIME = re.compile(
+    r"(\d{1,2}):(\d{2}):(\d{2})[,.](\d{1,3})\s*-->\s*(\d{1,2}):(\d{2}):(\d{2})[,.](\d{1,3})"
+)
+
+
+def _to_ms(h: str, m: str, s: str, frac: str) -> int:
+    return ((int(h) * 60 + int(m)) * 60 + int(s)) * 1000 + int(frac.ljust(3, "0"))
+
+
+def parse_srt(content: str) -> list[SubtitleCue]:
+    """Parse SRT (or VTT-style timings) into cues, re-indexing sequentially."""
+    cues: list[SubtitleCue] = []
+    blocks = re.split(r"\r?\n\s*\r?\n", content.lstrip("\ufeff").strip())
+    for block in blocks:
+        lines = [line for line in block.splitlines() if line.strip()]
+        for i, line in enumerate(lines):
+            match = _SRT_TIME.search(line)
+            if match:
+                g = match.groups()
+                text = normalize_text(" ".join(lines[i + 1 :]))
+                if text:
+                    cues.append(
+                        SubtitleCue(
+                            index=len(cues) + 1,
+                            start_ms=_to_ms(*g[:4]),
+                            end_ms=_to_ms(*g[4:]),
+                            text=text,
+                        )
+                    )
+                break
+    return cues

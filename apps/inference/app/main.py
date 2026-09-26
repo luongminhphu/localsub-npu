@@ -7,141 +7,273 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
+from app import translation, whisper
 from app.audit import to_jsonable
 from app.config import Settings, load_env_file
 from app.diagnostics import build_diagnostic_report
-from app.errors import LocalSubError
+from app.errors import ErrorCode, LocalSubError
 from app.models import JobState
+from app.project import FORMATS, export_project, parse_project, project_from_cues
+
+ALL_MODELS: dict[str, tuple[str, str]] = {
+    **{m: ("asr", r) for m, r in whisper.MODEL_CATALOG.items()},
+    **{m: ("translation", r) for m, r in translation.TRANSLATION_CATALOG.items()},
+}
+DEVICES = ["auto", "NPU", "GPU", "CPU"]
 
 
 def _print_json(payload: Any) -> None:
-    print(json.dumps(to_jsonable(payload), ensure_ascii=False, indent=2))
+    print(json.dumps(to_jsonable(payload), ensure_ascii=False, indent=2), flush=True)
+
+
+def _formats(value: str) -> tuple[str, ...]:
+    items = tuple(dict.fromkeys(v.strip().lower() for v in value.split(",") if v.strip()))
+    bad = [v for v in items if v not in FORMATS]
+    if bad or not items:
+        raise argparse.ArgumentTypeError(f"formats must be a comma list of {', '.join(FORMATS)}")
+    return items
 
 
 def build_parser() -> argparse.ArgumentParser:
-    from app import whisper
-
     parser = argparse.ArgumentParser(description="LocalSub NPU local worker")
     sub = parser.add_subparsers(dest="command", required=True)
 
     sub.add_parser("diagnostics", help="Report FFmpeg/OpenVINO/device status")
 
-    models = sub.add_parser("models", help="List or download OpenVINO Whisper models")
+    models = sub.add_parser("models", help="List or download OpenVINO models")
     models_sub = models.add_subparsers(dest="models_command", required=True)
     models_sub.add_parser("list")
     download = models_sub.add_parser("download")
-    download.add_argument("model_id", choices=sorted(whisper.MODEL_CATALOG))
+    download.add_argument("model_id", choices=sorted(ALL_MODELS))
 
-    tr = sub.add_parser("transcribe", help="Generate an SRT subtitle from local media")
+    tr = sub.add_parser("transcribe", help="Generate subtitles from local media")
     tr.add_argument("source", type=Path)
     tr.add_argument("--language", choices=sorted(whisper.LANGUAGES), default="auto")
     tr.add_argument(
         "--task",
         choices=sorted(whisper.TASKS),
         default="transcribe",
-        help="'translate' produces English subtitles from any spoken language",
+        help="'translate' makes Whisper produce English directly",
     )
     tr.add_argument("--model", default=whisper.DEFAULT_MODEL, choices=sorted(whisper.MODEL_CATALOG))
+    tr.add_argument("--device", choices=DEVICES, help="Override OPENVINO_DEVICE for Whisper")
+    tr.add_argument("--translate-to", choices=["vi", "en"], help="Add a translated track (LLM)")
     tr.add_argument(
-        "--device", choices=["auto", "NPU", "GPU", "CPU"], help="Override OPENVINO_DEVICE"
+        "--translation-model",
+        default=translation.DEFAULT_TRANSLATION_MODEL,
+        choices=sorted(translation.TRANSLATION_CATALOG),
     )
-    tr.add_argument("--output", type=Path, help="Output .srt path")
-    tr.add_argument("--events", action="store_true", help="Stream JSON progress events to stdout")
+    tr.add_argument("--translation-device", choices=DEVICES, help="Device for the translation LLM")
+    tr.add_argument("--formats", type=_formats, default=("srt",), help="e.g. srt,vtt,txt,json")
+    tr.add_argument("--output", type=Path, help="Output .srt path for the source track")
+    tr.add_argument("--events", action="store_true", help="Stream JSON Lines events to stdout")
+
+    tl = sub.add_parser("translate", help="Translate an existing SRT file with the local LLM")
+    tl.add_argument("source", type=Path)
+    tl.add_argument("--from", dest="source_language", choices=["vi", "en"], required=True)
+    tl.add_argument("--to", dest="target_language", choices=["vi", "en"], required=True)
+    tl.add_argument(
+        "--model",
+        default=translation.DEFAULT_TRANSLATION_MODEL,
+        choices=sorted(translation.TRANSLATION_CATALOG),
+    )
+    tl.add_argument("--device", choices=DEVICES)
+    tl.add_argument("--formats", type=_formats, default=("srt", "json"))
+    tl.add_argument("--events", action="store_true")
+
+    ex = sub.add_parser("export", help="Render an edited localsub project JSON to files")
+    ex.add_argument("--input", default="-", help="Project JSON path, or '-' for stdin")
+    ex.add_argument("--output-base", type=Path, required=True, help="Path without extension")
+    ex.add_argument("--formats", type=_formats, default=("srt",))
     return parser
 
 
-def main(argv: list[str] | None = None) -> int:
-    from app import whisper
+def _with_device(settings: Settings, device: str | None) -> Settings:
+    if not device:
+        return settings
+    return Settings(device, settings.ffmpeg_path, settings.output_dir, settings.model_dir,
+                    settings.log_level)
+
+
+def _event_printer(events: bool):
+    def emit(event: dict[str, Any]) -> None:
+        if events:
+            print(json.dumps(to_jsonable(event), ensure_ascii=False), flush=True)
+            return
+        if event.get("type") == "progress":
+            print(f"  translating {event['done']}/{event['total']}", file=sys.stderr, flush=True)
+        elif event.get("type") == "state":
+            extra = event.get("device") or event.get("model_id") or event.get("error_message") or ""
+            print(f"[{event['state']}] {extra}".rstrip(), file=sys.stderr, flush=True)
+
+    return emit
+
+
+def _cmd_transcribe(args: argparse.Namespace, settings: Settings) -> int:
     from app.jobs import JobRequest, run_job
+
+    settings = _with_device(settings, args.device)
+    record = run_job(
+        settings,
+        JobRequest(
+            source=args.source,
+            language=args.language,
+            task=args.task,
+            model_id=args.model,
+            output=args.output,
+            translate_to=args.translate_to,
+            translation_model=args.translation_model,
+            translation_device=args.translation_device,
+            formats=args.formats,
+        ),
+        emit=_event_printer(args.events),
+    )
+    summary = {
+        "job_id": record.job_id,
+        "state": record.state,
+        "output_path": record.output_path,
+        "outputs": record.outputs,
+        "model_id": record.model_id,
+        "device_requested": record.device_requested,
+        "device_resolved": record.device.resolved if record.device else None,
+        "fallback_reason": record.device.fallback_reason if record.device else None,
+        "translate_to": record.translate_to,
+        "translation_model": record.translation_model,
+        "translation_device": (
+            record.translation_device.resolved if record.translation_device else None
+        ),
+        "translation_fallback_lines": record.translation_fallback_lines,
+        "openvino_version": record.openvino_version,
+        "source_duration_ms": record.source_duration_ms,
+        "timings_ms": record.timings_ms,
+        "real_time_factor": record.real_time_factor,
+        "cue_count": record.cue_count,
+        "detected_language": record.detected_language,
+        "error_code": record.error_code,
+        "error_message": record.error_message,
+    }
+    if args.events:
+        print(json.dumps(to_jsonable({"type": "summary", "summary": summary}),
+                         ensure_ascii=False), flush=True)
+    else:
+        _print_json(summary)
+    return 0 if record.state == JobState.COMPLETED else 1
+
+
+def _cmd_translate(args: argparse.Namespace, settings: Settings) -> int:
+    from app.jobs import _openvino_version
+    from app.subtitles import parse_srt
+
+    settings = _with_device(settings, args.device)
+    emit = _event_printer(args.events)
+    source = args.source
+    cues = parse_srt(source.read_text(encoding="utf-8-sig"))
+    if not cues:
+        raise LocalSubError(ErrorCode.INPUT_UNSUPPORTED, "No subtitle cues found in input.")
+    path = translation.ensure_model_present(
+        translation.model_path_for(settings.model_dir, args.model), args.model
+    )
+    _, available = _openvino_version()
+    translator = translation.load_translator(
+        path, args.model, settings.device_preference, settings.preferred_devices(), available,
+        cache_dir=settings.model_dir / ".ov-cache",
+    )
+    emit({"type": "state", "state": JobState.TRANSLATING, "device": translator.device.resolved})
+    result = translation.translate_lines(
+        translator,
+        [c.text for c in cues],
+        args.source_language,
+        args.target_language,
+        on_progress=lambda d, t: emit(
+            {"type": "progress", "stage": "translating", "done": d, "total": t}
+        ),
+    )
+    project = project_from_cues(
+        cues, list(result.lines), args.source_language, args.target_language, None
+    )
+    stem = source.name[: -len(".srt")] if source.name.lower().endswith(".srt") else source.stem
+    for lang in ("vi", "en"):
+        if stem.endswith(f".{lang}"):
+            stem = stem[: -len(lang) - 1]
+    outputs = export_project(
+        project, source.with_name(stem), args.formats, include_source=False
+    )
+    _print_json(
+        {
+            "outputs": outputs,
+            "device": translator.device,
+            "fallback_lines": result.fallback_lines,
+            "timings_ms": {"load": translator.load_ms, "translation": result.inference_ms},
+        }
+    )
+    return 0
+
+
+def _cmd_export(args: argparse.Namespace) -> int:
+    raw = sys.stdin.read() if args.input == "-" else Path(args.input).read_text(encoding="utf-8")
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise LocalSubError(ErrorCode.SUBTITLE_VALIDATION_FAILED, f"Invalid JSON: {exc}") from exc
+    outputs = export_project(parse_project(payload), args.output_base, args.formats)
+    _print_json({"outputs": outputs})
+    return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    for stream in (sys.stdout, sys.stderr, sys.stdin):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8")  # Vietnamese text over Windows pipes
 
     args = build_parser().parse_args(argv)
     load_env_file()
     settings = Settings.from_env()
 
-    if args.command == "diagnostics":
-        report = build_diagnostic_report(settings)
-        payload = asdict(report)
-        payload["output_dir"] = str(settings.output_dir)
-        payload["model_dir"] = str(settings.model_dir)
-        payload["installed_models"] = [
-            m for m in whisper.MODEL_CATALOG if (settings.model_dir / m).is_dir()
-        ]
-        _print_json(payload)
-        return 0
-
-    if args.command == "models":
-        if args.models_command == "list":
-            _print_json(
-                [
-                    {
-                        "id": m,
-                        "source": repo,
-                        "installed": (settings.model_dir / m).is_dir(),
-                        "path": settings.model_dir / m,
-                    }
-                    for m, repo in whisper.MODEL_CATALOG.items()
-                ]
-            )
+    try:
+        if args.command == "diagnostics":
+            report = build_diagnostic_report(settings)
+            payload = asdict(report)
+            payload["output_dir"] = str(settings.output_dir)
+            payload["model_dir"] = str(settings.model_dir)
+            payload["installed_models"] = [
+                m for m in ALL_MODELS if (settings.model_dir / m).is_dir()
+            ]
+            _print_json(payload)
             return 0
-        try:
-            path = whisper.download_model(settings.model_dir, args.model_id)
-        except LocalSubError as exc:
-            print(str(exc), file=sys.stderr)
-            return 2
-        _print_json({"model_id": args.model_id, "path": path})
-        return 0
 
-    if args.command == "transcribe":
-        if args.device:
-            settings = Settings(
-                device_preference=args.device,
-                ffmpeg_path=settings.ffmpeg_path,
-                output_dir=settings.output_dir,
-                model_dir=settings.model_dir,
-                log_level=settings.log_level,
-            )
+        if args.command == "models":
+            if args.models_command == "list":
+                _print_json(
+                    [
+                        {
+                            "id": m,
+                            "kind": kind,
+                            "source": repo,
+                            "installed": (settings.model_dir / m).is_dir(),
+                            "path": settings.model_dir / m,
+                        }
+                        for m, (kind, repo) in ALL_MODELS.items()
+                    ]
+                )
+                return 0
+            kind, _ = ALL_MODELS[args.model_id]
+            module = whisper if kind == "asr" else translation
+            path = module.download_model(settings.model_dir, args.model_id)
+            _print_json({"model_id": args.model_id, "kind": kind, "path": path})
+            return 0
 
-        def emit(event: dict[str, Any]) -> None:
-            if args.events:
-                print(json.dumps(to_jsonable(event), ensure_ascii=False), flush=True)
-            else:
-                state = event.get("state", "")
-                extra = event.get("device") or event.get("error_message") or ""
-                print(f"[{state}] {extra}".rstrip(), file=sys.stderr, flush=True)
-
-        record = run_job(
-            settings,
-            JobRequest(
-                source=args.source,
-                language=args.language,
-                task=args.task,
-                model_id=args.model,
-                output=args.output,
-            ),
-            emit=emit,
-        )
-        summary = {
-            "job_id": record.job_id,
-            "state": record.state,
-            "output_path": record.output_path,
-            "model_id": record.model_id,
-            "device_requested": record.device_requested,
-            "device_resolved": record.device.resolved if record.device else None,
-            "fallback_reason": record.device.fallback_reason if record.device else None,
-            "openvino_version": record.openvino_version,
-            "source_duration_ms": record.source_duration_ms,
-            "timings_ms": record.timings_ms,
-            "real_time_factor": record.real_time_factor,
-            "cue_count": record.cue_count,
-            "detected_language": record.detected_language,
-            "error_code": record.error_code,
-            "error_message": record.error_message,
-        }
-        if args.events:
-            print(json.dumps(to_jsonable({"summary": summary}), ensure_ascii=False), flush=True)
-        else:
-            _print_json(summary)
-        return 0 if record.state == JobState.COMPLETED else 1
+        if args.command == "transcribe":
+            return _cmd_transcribe(args, settings)
+        if args.command == "translate":
+            return _cmd_translate(args, settings)
+        if args.command == "export":
+            return _cmd_export(args)
+    except LocalSubError as exc:
+        payload = {"type": "error", "error_code": exc.code, "error_message": exc.message}
+        print(json.dumps(to_jsonable(payload), ensure_ascii=False), file=sys.stderr, flush=True)
+        if getattr(args, "events", False):
+            print(json.dumps(to_jsonable(payload), ensure_ascii=False), flush=True)
+        return 2
 
     return 1
 
