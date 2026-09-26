@@ -7,5 +7,10 @@ export default defineConfig({
   server: {
     port: 1420,
     strictPort: true,
+    watch: {
+      // Cargo writes and locks build artifacts under src-tauri/target while `tauri dev`
+      // compiles; watching them crashes Vite on Windows with EBUSY.
+      ignored: ["**/src-tauri/**"],
+    },
   },
 });
