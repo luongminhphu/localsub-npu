@@ -7,7 +7,7 @@ use std::process::{Child, Stdio};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 #[derive(Default)]
 struct JobState {
@@ -240,6 +240,14 @@ fn load_project(path: String) -> Result<String, String> {
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .setup(|app| {
+            let paths = app.path();
+            worker::set_app_paths(worker::AppPaths {
+                resource_dir: paths.resource_dir().ok(),
+                data_dir: paths.app_local_data_dir().ok(),
+            });
+            Ok(())
+        })
         .manage(JobState::default())
         .manage(DownloadState::default())
         .invoke_handler(tauri::generate_handler![

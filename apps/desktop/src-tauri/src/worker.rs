@@ -1,4 +1,8 @@
-//! Locates and runs the Python inference worker (`python -m app.main`).
+//! Locates and runs the inference worker.
+//!
+//! Lookup order: explicit env overrides (`LOCALSUB_WORKER_DIR` / `LOCALSUB_WORKER_PYTHON`), then the
+//! frozen worker bundled by the installer (`<resource_dir>/worker/localsub-worker.exe`), then the
+//! source checkout (`apps/inference` + `.venv`, run as `python -m app.main`).
 //!
 //! The worker is always spawned with an explicit argument vector (never a shell string) and
 //! every user-selectable value is checked against an allow-list before it reaches the process.
@@ -6,6 +10,7 @@
 use std::env;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::OnceLock;
 
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
@@ -21,8 +26,39 @@ pub const FORMATS: &[&str] = &["srt", "vtt", "txt", "json"];
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct WorkerLocation {
+    /// Python interpreter (source mode) or the frozen worker executable (bundled mode).
     pub python: PathBuf,
     pub worker_dir: PathBuf,
+    pub bundled: bool,
+}
+
+/// Directories known only at runtime (set once from the Tauri `setup` hook).
+#[derive(Debug, Clone, Default)]
+pub struct AppPaths {
+    pub resource_dir: Option<PathBuf>,
+    pub data_dir: Option<PathBuf>,
+}
+
+static APP_PATHS: OnceLock<AppPaths> = OnceLock::new();
+
+pub fn set_app_paths(paths: AppPaths) {
+    let _ = APP_PATHS.set(paths);
+}
+
+fn app_paths() -> AppPaths {
+    APP_PATHS.get().cloned().unwrap_or_default()
+}
+
+pub const BUNDLED_EXE: &str = if cfg!(windows) {
+    "localsub-worker.exe"
+} else {
+    "localsub-worker"
+};
+
+/// Frozen worker shipped by the installer, if present.
+pub fn bundled_worker(resource_dir: &Path) -> Option<PathBuf> {
+    let exe = resource_dir.join("worker").join(BUNDLED_EXE);
+    exe.is_file().then_some(exe)
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -73,6 +109,22 @@ fn find_worker_dir() -> Option<PathBuf> {
 }
 
 pub fn locate() -> Result<WorkerLocation, String> {
+    locate_with(app_paths().resource_dir.as_deref())
+}
+
+pub fn locate_with(resource_dir: Option<&Path>) -> Result<WorkerLocation, String> {
+    let overridden = env::var_os("LOCALSUB_WORKER_DIR").is_some()
+        || env::var_os("LOCALSUB_WORKER_PYTHON").is_some();
+    if !overridden {
+        if let Some(exe) = resource_dir.and_then(bundled_worker) {
+            let worker_dir = exe.parent().map(Path::to_path_buf).unwrap_or_default();
+            return Ok(WorkerLocation {
+                python: exe,
+                worker_dir,
+                bundled: true,
+            });
+        }
+    }
     let worker_dir = find_worker_dir().ok_or_else(|| {
         "Cannot find apps/inference. Set LOCALSUB_WORKER_DIR to the worker folder.".to_string()
     })?;
@@ -90,16 +142,32 @@ pub fn locate() -> Result<WorkerLocation, String> {
             }
         }
     };
-    Ok(WorkerLocation { python, worker_dir })
+    Ok(WorkerLocation {
+        python,
+        worker_dir,
+        bundled: false,
+    })
 }
 
-/// Data directories default to `<repo>/data/{models,output}` (same as the PowerShell scripts)
-/// unless set in the real environment or in the repository `.env` file.
-fn data_dir_defaults(worker_dir: &Path) -> Vec<(&'static str, PathBuf)> {
-    let Some(repo) = worker_dir.parent().and_then(Path::parent) else {
-        return Vec::new();
+/// Data directories. Source mode: `<repo>/data/{models,output}` (same as the PowerShell scripts)
+/// unless set in the real environment or the repository `.env`. Bundled mode: the per-user app data
+/// folder (`%LOCALAPPDATA%\com.luongminhphu.localsubnpu\{models,output}`) unless set in the env.
+pub fn data_dir_defaults(
+    location: &WorkerLocation,
+    app_data: Option<&Path>,
+) -> Vec<(&'static str, PathBuf)> {
+    let (base, dotenv) = if location.bundled {
+        match app_data {
+            Some(dir) => (dir.to_path_buf(), String::new()),
+            None => return Vec::new(),
+        }
+    } else {
+        let Some(repo) = location.worker_dir.parent().and_then(Path::parent) else {
+            return Vec::new();
+        };
+        let dotenv = std::fs::read_to_string(repo.join(".env")).unwrap_or_default();
+        (repo.join("data"), dotenv)
     };
-    let dotenv = std::fs::read_to_string(repo.join(".env")).unwrap_or_default();
     let defined = |key: &str| {
         env::var_os(key).is_some()
             || dotenv
@@ -107,8 +175,8 @@ fn data_dir_defaults(worker_dir: &Path) -> Vec<(&'static str, PathBuf)> {
                 .any(|l| l.trim_start().starts_with(key) && l.contains('='))
     };
     [
-        ("LOCALSUB_MODEL_DIR", repo.join("data").join("models")),
-        ("LOCALSUB_OUTPUT_DIR", repo.join("data").join("output")),
+        ("LOCALSUB_MODEL_DIR", base.join("models")),
+        ("LOCALSUB_OUTPUT_DIR", base.join("output")),
     ]
     .into_iter()
     .filter(|(key, _)| !defined(key))
@@ -117,10 +185,11 @@ fn data_dir_defaults(worker_dir: &Path) -> Vec<(&'static str, PathBuf)> {
 
 pub fn command(location: &WorkerLocation, args: &[String]) -> Command {
     let mut cmd = Command::new(&location.python);
-    cmd.envs(data_dir_defaults(&location.worker_dir));
-    cmd.arg("-m")
-        .arg("app.main")
-        .args(args)
+    cmd.envs(data_dir_defaults(location, app_paths().data_dir.as_deref()));
+    if !location.bundled {
+        cmd.arg("-m").arg("app.main");
+    }
+    cmd.args(args)
         .current_dir(&location.worker_dir)
         .env("PYTHONUTF8", "1")
         .env("PYTHONIOENCODING", "utf-8")
@@ -238,6 +307,79 @@ mod tests {
             translation_device: None,
             formats: vec!["srt".into(), "vtt".into()],
         }
+    }
+
+    fn fake_bundle(name: &str) -> PathBuf {
+        let root = std::env::temp_dir().join(name);
+        let worker = root.join("worker");
+        std::fs::create_dir_all(&worker).unwrap();
+        std::fs::write(worker.join(BUNDLED_EXE), b"stub").unwrap();
+        root
+    }
+
+    #[test]
+    fn detects_bundled_worker_and_uses_app_data_dirs() {
+        let root = fake_bundle("localsub-bundle-test");
+        let exe = bundled_worker(&root).expect("bundled worker");
+        assert!(exe.ends_with(Path::new("worker").join(BUNDLED_EXE)));
+        assert!(bundled_worker(&std::env::temp_dir().join("localsub-no-bundle")).is_none());
+
+        let location = WorkerLocation {
+            python: exe.clone(),
+            worker_dir: exe.parent().unwrap().to_path_buf(),
+            bundled: true,
+        };
+        let data = std::env::temp_dir().join("localsub-appdata");
+        let defaults = data_dir_defaults(&location, Some(&data));
+        for (key, path) in &defaults {
+            assert!(path.starts_with(&data), "{key} should live in app data");
+        }
+        // Frozen executable is run directly, without `-m app.main`.
+        let cmd = command(&location, &["models".into(), "list".into()]);
+        let args: Vec<_> = cmd
+            .get_args()
+            .map(|a| a.to_string_lossy().to_string())
+            .collect();
+        assert_eq!(args, ["models", "list"]);
+        assert_eq!(cmd.get_program(), exe.as_os_str());
+    }
+
+    #[test]
+    fn source_mode_runs_python_module() {
+        let location = WorkerLocation {
+            python: PathBuf::from("python"),
+            worker_dir: PathBuf::from("repo/apps/inference"),
+            bundled: false,
+        };
+        let cmd = command(&location, &["diagnostics".into()]);
+        let args: Vec<_> = cmd
+            .get_args()
+            .map(|a| a.to_string_lossy().to_string())
+            .collect();
+        assert_eq!(args, ["-m", "app.main", "diagnostics"]);
+    }
+
+    /// Runs the real frozen worker. Set LOCALSUB_TEST_BUNDLE_DIR to a folder containing
+    /// `worker/localsub-worker(.exe)` (the PyInstaller output renamed to `worker`).
+    #[test]
+    #[ignore]
+    fn spawns_real_bundled_worker() {
+        let dir = PathBuf::from(std::env::var("LOCALSUB_TEST_BUNDLE_DIR").expect("set bundle dir"));
+        let exe = bundled_worker(&dir).expect("bundled worker missing");
+        let location = WorkerLocation {
+            python: exe.clone(),
+            worker_dir: exe.parent().unwrap().to_path_buf(),
+            bundled: true,
+        };
+        let out = command(&location, &["models".into(), "list".into()])
+            .output()
+            .expect("spawn frozen worker");
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(String::from_utf8_lossy(&out.stdout).contains("whisper-small-int8"));
     }
 
     #[test]

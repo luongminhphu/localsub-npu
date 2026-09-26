@@ -39,3 +39,8 @@ apps/desktop/src-tauri/target/
 .DS_Store
 Thumbs.db
 *.tsbuildinfo
+
+# Frozen worker (PyInstaller) build output
+apps/inference/dist/
+apps/inference/build/
+apps/inference/.venv-build/
