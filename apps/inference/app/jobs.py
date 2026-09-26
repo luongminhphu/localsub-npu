@@ -77,8 +77,9 @@ def output_base(settings: Settings, request: JobRequest) -> tuple[Path, bool]:
 def _settings_with_device(settings: Settings, device: str | None) -> Settings:
     if not device:
         return settings
-    return Settings(device, settings.ffmpeg_path, settings.output_dir, settings.model_dir,
-                    settings.log_level)
+    return Settings(
+        device, settings.ffmpeg_path, settings.output_dir, settings.model_dir, settings.log_level
+    )
 
 
 def _openvino_version() -> tuple[str | None, tuple[str, ...]]:
@@ -149,7 +150,7 @@ def run_job(
         unknown = [f for f in request.formats if f not in FORMATS]
         if unknown or not request.formats:
             raise LocalSubError(ErrorCode.INPUT_UNSUPPORTED, f"Unknown export formats: {unknown}")
-        if request.translate_to not in (None, "vi", "en"):
+        if request.translate_to not in (None, *translation.TARGET_LANGUAGES):
             raise LocalSubError(ErrorCode.INPUT_UNSUPPORTED, "translate_to must be vi or en")
         source = audio.validate_source(request.source)
         record.source_path = source

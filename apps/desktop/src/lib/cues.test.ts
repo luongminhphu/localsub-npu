@@ -1,10 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
+  MAX_CUE_CHARS,
+  MAX_CUE_CHARS_CJK,
   defaultOutputBase,
   deleteCue,
   initialJob,
+  isCjk,
   isProject,
   jobReducer,
+  maxCharsFor,
   mergeWithNext,
   outputBaseFromSavePath,
   parseWorkerLine,
@@ -119,5 +123,25 @@ describe("job reducer", () => {
     expect(state.status).toBe("cancelled");
     expect(parseWorkerLine("not json")).toBeNull();
     expect(parseWorkerLine("[1,2]")).toBeNull();
+  });
+});
+
+describe("Japanese cue limits", () => {
+  it("detects kana/kanji and uses the 32-character limit", () => {
+    expect(isCjk("決算は好調です")).toBe(true);
+    expect(isCjk("Toyota の決算は好調です")).toBe(true);
+    expect(isCjk("Xin chào các bạn")).toBe(false);
+    expect(maxCharsFor("決算")).toBe(MAX_CUE_CHARS_CJK);
+    expect(maxCharsFor("Hello")).toBe(MAX_CUE_CHARS);
+  });
+
+  it("warns on long Japanese source but not on the same length of Latin text", () => {
+    const ja = "あ".repeat(MAX_CUE_CHARS_CJK + 1);
+    const latin = "a".repeat(MAX_CUE_CHARS_CJK + 1);
+    const issues = validateCues([
+      { start_ms: 0, end_ms: 1000, text: ja, translation: "Hello" },
+      { start_ms: 1000, end_ms: 2000, text: latin, translation: null },
+    ]);
+    expect(issues).toEqual([{ index: 0, severity: "warning", message: "Longer than 32 characters" }]);
   });
 });

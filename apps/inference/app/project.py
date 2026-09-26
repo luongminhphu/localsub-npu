@@ -5,7 +5,7 @@ Schema (``localsub.project/v1``)::
     {
       "schema": "localsub.project/v1",
       "source_media": "D:/Videos/talk.mp4" | null,
-      "source_language": "vi" | "en" | null,
+      "source_language": "vi" | "en" | "ja" | null,
       "target_language": "vi" | "en" | null,
       "cues": [{"start_ms": 0, "end_ms": 1200, "text": "...", "translation": "..." | null}]
     }

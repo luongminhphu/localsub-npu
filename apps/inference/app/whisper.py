@@ -21,7 +21,7 @@ MODEL_CATALOG: dict[str, str] = {
     "whisper-large-v3-int8": "OpenVINO/whisper-large-v3-int8-ov",
 }
 DEFAULT_MODEL = "whisper-small-int8"
-LANGUAGES = {"auto", "en", "vi"}
+LANGUAGES = {"auto", "en", "ja", "vi"}
 TASKS = {"transcribe", "translate"}
 
 PipelineFactory = Callable[[Path, str, dict[str, Any]], Any]

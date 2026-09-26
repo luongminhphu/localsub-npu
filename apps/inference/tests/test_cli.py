@@ -35,3 +35,16 @@ def test_models_list_includes_both_kinds(capsys, monkeypatch, tmp_path: Path) ->
 
 def test_formats_argument_validation() -> None:
     assert cli._formats("srt, VTT,srt") == ("srt", "vtt")
+
+
+def test_translate_command_accepts_japanese_source_only_as_source() -> None:
+    import pytest
+
+    parser = cli.build_parser()
+    args = parser.parse_args(["translate", "a.ja.srt", "--from", "ja", "--to", "en"])
+    assert (args.source_language, args.target_language) == ("ja", "en")
+    with pytest.raises(SystemExit):
+        parser.parse_args(["translate", "a.srt", "--from", "en", "--to", "ja"])
+    assert (
+        cli.build_parser().parse_args(["transcribe", "x.mp4", "--language", "ja"]).language == "ja"
+    )

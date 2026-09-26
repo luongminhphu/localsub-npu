@@ -13,7 +13,7 @@ use std::os::windows::process::CommandExt;
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
-pub const LANGUAGES: &[&str] = &["auto", "en", "vi"];
+pub const LANGUAGES: &[&str] = &["auto", "en", "ja", "vi"];
 pub const TARGETS: &[&str] = &["en", "vi"];
 pub const DEVICES: &[&str] = &["auto", "NPU", "GPU", "CPU"];
 pub const TASKS: &[&str] = &["transcribe", "translate"];
@@ -249,6 +249,12 @@ mod tests {
 
     /// Spawns the real worker. Run with LOCALSUB_WORKER_DIR/LOCALSUB_WORKER_PYTHON set:
     /// `cargo test -- --ignored`.
+    #[test]
+    fn accepts_japanese_as_spoken_language_only() {
+        assert!(allowed("language", "ja", LANGUAGES).is_ok());
+        assert!(allowed("translate_to", "ja", TARGETS).is_err());
+    }
+
     #[test]
     #[ignore]
     fn spawns_real_worker_models_list() {

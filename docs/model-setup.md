@@ -29,7 +29,7 @@ data/
     qwen3-8b-int4-cw/          # translation LLM
     .ov-cache/                 # compiled NPU/GPU blobs (safe to delete)
   output/
-    <name>.en.srt  <name>.vi.srt  <name>.*.vtt  <name>.*.txt
+    <name>.en.srt  <name>.vi.srt  <name>.ja.srt  <name>.*.vtt  <name>.*.txt
     <name>.localsub.json       # editable project (source + translation per cue)
     logs/jobs.jsonl
 ```
@@ -67,3 +67,11 @@ VI → EN with better quality) use `--translate-to`:
 3. Record load time (first and cached), inference time, real-time factor, and subtitle quality per device.
 4. Task Manager > Performance > NPU 0 shows utilization during the NPU run.
 5. No network traffic during transcription after the model download.
+
+## Japanese source (0.4.0)
+
+- Speech languages: `auto`, `en`, `vi`, `ja`. Translation directions: en↔vi, ja→en, ja→vi (targets are `en`/`vi` only).
+- Recommended Whisper for Japanese: `whisper-large-v3-turbo-int8` (or `whisper-medium-int8`); tiny/base/small often pick the wrong kanji.
+- Japanese cues split by character, max 32 characters, preferring `。、！？` or the spaces Whisper inserts between sentences; reading-speed estimate 150 ms/char.
+- The prompt adds a Japanese rule (sentences span several lines; keep one output line per input line; keep names; render honorifics naturally). Full-width numbering (`１．`) is normalised.
+- Implausible outputs (placeholder echoes such as `N. text`, repetition loops, no letters, >4x source length) are rejected, retried once per line, then fall back to the source text.

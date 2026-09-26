@@ -7,7 +7,7 @@
 [CmdletBinding()]
 param(
   [Parameter(Mandatory = $true)][string]$Source,
-  [ValidateSet("auto", "en", "vi")][string]$Language = "auto",
+  [ValidateSet("auto", "en", "ja", "vi")][string]$Language = "auto",
   [string]$Model = "whisper-small-int8",
   [string[]]$Devices = @("NPU", "GPU", "CPU")
 )
