@@ -16,16 +16,21 @@ if ($ffmpeg) {
   Write-Warning "FFmpeg is not on PATH."
 }
 
-$python = Get-Command python -ErrorAction SilentlyContinue
-if (-not $python) {
-  throw "Python is required. Install Python 3.11+ and ensure it is on PATH."
+$venvPython = Join-Path $workerPath ".venv\Scripts\python.exe"
+if (Test-Path $venvPython) {
+  $pythonExe = $venvPython
+} elseif (Get-Command python -ErrorAction SilentlyContinue) {
+  $pythonExe = "python"
+} else {
+  throw "Python is required. Run .\scripts\setup-wave2.ps1 or install Python 3.11+."
 }
+if (-not $env:LOCALSUB_MODEL_DIR) { $env:LOCALSUB_MODEL_DIR = Join-Path $repoRoot "data\models" }
 
 Push-Location $workerPath
 try {
-  python -m app.main diagnostics
+  & $pythonExe -m app.main diagnostics
 } finally {
   Pop-Location
 }
 
-Write-Host "Open Task Manager > Performance > NPU while a future inference job runs to observe workload activity." -ForegroundColor Yellow
+Write-Host "Open Task Manager > Performance > NPU while .\scripts\transcribe.ps1 runs to observe workload activity." -ForegroundColor Yellow

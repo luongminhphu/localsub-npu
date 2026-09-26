@@ -1,43 +1,51 @@
 # Model setup
 
-## Wave 1 status
+## Available models
 
-No model downloader or Whisper invocation is implemented in Wave 1. This document specifies the intended local-only model workflow so artifacts are not accidentally committed into the repository.
+Intel publishes pre-converted OpenVINO IR models, so no PyTorch/Optimum export is required:
 
-## Intended layout
+| Model id | Hugging Face repo | Notes |
+|---|---|---|
+| `whisper-tiny-int8` | `OpenVINO/whisper-tiny-int8-ov` | Smoke tests only |
+| `whisper-base-int8` | `OpenVINO/whisper-base-int8-ov` | Fast, weak on Vietnamese |
+| `whisper-small-int8` | `OpenVINO/whisper-small-int8-ov` | **Default**; first NPU target |
+| `whisper-medium-int8` | `OpenVINO/whisper-medium-int8-ov` | Better Vietnamese, slower |
+| `whisper-large-v3-turbo-int8` | `OpenVINO/whisper-large-v3-turbo-int8-ov` | Best quality/speed balance for Vietnamese; try GPU and NPU |
+| `whisper-large-v3-int8` | `OpenVINO/whisper-large-v3-int8-ov` | Highest quality, slowest |
+
+```powershell
+cd apps/inference
+.\.venv\Scripts\python.exe -m app.main models download whisper-small-int8
+```
+
+Models are stored in `LOCALSUB_MODEL_DIR` (default `data/models/<model-id>`), which is git-ignored. Check each model card for its license.
+
+## Layout
 
 ```text
 data/
   models/
-    whisper-small-openvino-int8/
-    translation-en-vi/
-    translation-vi-en/
+    whisper-small-int8/        # OpenVINO IR + tokenizer/detokenizer
+    .ov-cache/                 # compiled NPU/GPU blobs (safe to delete)
+  output/
+    <name>.vi.srt
+    logs/jobs.jsonl
 ```
 
-`data/` is excluded by `.gitignore`.
+## Translation
 
-## Planned model policy
+Whisper `--task translate` only produces **English**. English → Vietnamese needs a separate local model (planned for Wave 3, e.g. a small INT4 LLM on the NPU via OpenVINO GenAI `LLMPipeline`).
 
-- Begin hardware verification with a compact Whisper OpenVINO model such as a base or small INT8 variant.
-- Use a locally stored translation model for English-to-Vietnamese. Native Whisper translation is generally oriented toward English output, so it is not sufficient by itself for EN → VI.
-- Store model identifier, source URL, revision, checksum, license, conversion recipe, and OpenVINO version in a local manifest.
-- Require users to accept the upstream model license during model download/setup.
+## NPU notes
 
-## OpenVINO device selection
-
-Set `OPENVINO_DEVICE` in `.env`:
-
-```text
-OPENVINO_DEVICE=auto
-```
-
-`auto` asks the worker to attempt `NPU`, followed by `GPU`, followed by `CPU`. An explicit setting such as `NPU` is a hard requirement: if the NPU is unavailable, the job must fail with an actionable message rather than silently run elsewhere.
+- OpenVINO GenAI documents Whisper tiny/base/small/large as supported on NPU with the standard pipeline.
+- The first NPU compile is slow; the `.ov-cache` directory makes subsequent loads fast.
+- `OPENVINO_DEVICE=NPU` (or `--device NPU`) is a hard requirement; `auto` falls back and records why.
 
 ## Verification checklist
 
-1. Install OpenVINO in the local Python environment when the Whisper slice is added.
-2. Run `scripts/diagnostics.ps1` and retain the JSON output.
-3. Confirm `NPU` appears in `available_devices`.
-4. Run the same short audio fixture on NPU, GPU, and CPU.
-5. Record elapsed time, real-time factor, peak memory, device resolution, and transcription quality.
-6. Confirm no cloud transcription endpoint is called after model setup.
+1. `.\scripts\diagnostics.ps1` shows `NPU` in `available_devices`.
+2. `.\scripts\benchmark-devices.ps1 -Source <60 s clip> -Language vi` completes on NPU, GPU, and CPU.
+3. Record load time (first and cached), inference time, real-time factor, and subtitle quality per device.
+4. Task Manager > Performance > NPU 0 shows utilization during the NPU run.
+5. No network traffic during transcription after the model download.
