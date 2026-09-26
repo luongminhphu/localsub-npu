@@ -3,12 +3,15 @@
   Prepare the LocalSub NPU Python worker for real Whisper inference on Windows 11.
 .EXAMPLE
   .\scripts\setup-wave2.ps1 -Model whisper-small-int8
+.EXAMPLE
+  .\scripts\setup-wave2.ps1 -TranslationModel qwen3-8b-int4-cw   # also fetch the EN<->VI LLM (~5 GB)
 #>
 [CmdletBinding()]
 param(
   [string]$Model = "whisper-small-int8",
   [string]$PythonLauncher = "py",
   [string]$PythonVersion = "3.11",
+  [string]$TranslationModel,
   [switch]$SkipModelDownload
 )
 
@@ -46,6 +49,11 @@ try {
     Write-Host "Downloading $Model into $env:LOCALSUB_MODEL_DIR ..."
     & $venvPython -m app.main models download $Model
     if ($LASTEXITCODE -ne 0) { throw "Model download failed." }
+    if ($TranslationModel) {
+      Write-Host "Downloading translation model $TranslationModel ..."
+      & $venvPython -m app.main models download $TranslationModel
+      if ($LASTEXITCODE -ne 0) { throw "Translation model download failed." }
+    }
   }
 
   & $venvPython -m app.main diagnostics

@@ -26,15 +26,33 @@ Models are stored in `LOCALSUB_MODEL_DIR` (default `data/models/<model-id>`), wh
 data/
   models/
     whisper-small-int8/        # OpenVINO IR + tokenizer/detokenizer
+    qwen3-8b-int4-cw/          # translation LLM
     .ov-cache/                 # compiled NPU/GPU blobs (safe to delete)
   output/
-    <name>.vi.srt
+    <name>.en.srt  <name>.vi.srt  <name>.*.vtt  <name>.*.txt
+    <name>.localsub.json       # editable project (source + translation per cue)
     logs/jobs.jsonl
 ```
 
-## Translation
+## Translation models
 
-Whisper `--task translate` only produces **English**. English → Vietnamese needs a separate local model (planned for Wave 3, e.g. a small INT4 LLM on the NPU via OpenVINO GenAI `LLMPipeline`).
+| Model id | Hugging Face repo | Size | Notes |
+|---|---|---|---|
+| `qwen3-8b-int4-cw` | `OpenVINO/Qwen3-8B-int4-cw-ov` | ~5 GB | **Default**; channel-wise INT4 recommended for Intel NPU |
+| `qwen2.5-7b-instruct-int4` | `OpenVINO/Qwen2.5-7B-Instruct-int4-ov` | ~4.5 GB | Good EN↔VI; best on the Arc GPU |
+| `qwen3-4b-int4` | `OpenVINO/Qwen3-4B-int4-ov` | ~2.5 GB | Balanced |
+| `qwen2.5-1.5b-instruct-int4` | `OpenVINO/Qwen2.5-1.5B-Instruct-int4-ov` | ~1 GB | Fast drafts, needs review |
+| `qwen3-0.6b-int4` | `OpenVINO/Qwen3-0.6B-int4-ov` | ~0.5 GB | Pipeline smoke tests only |
+
+Whisper `--task translate` can still produce English directly from any speech. For EN → VI (or
+VI → EN with better quality) use `--translate-to`:
+
+- Cues are sent in batches of 8 as numbered lines, with the 2 previous lines as context.
+- Qwen3 "thinking" is disabled through the chat template; any `<think>` block is stripped.
+- On NPU the LLM compiles static shapes (`MAX_PROMPT_LEN=1536`, `MIN_RESPONSE_LEN=768`).
+  The first compile takes minutes; `.ov-cache` makes later loads fast.
+- If a line is missing from the model output it is retried alone; if still missing the source
+  text is kept and `translation_fallback_lines` in the job summary is incremented.
 
 ## NPU notes
 

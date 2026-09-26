@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from app.devices import compile_with_fallback, ensure_ir_present, snapshot
 from app.errors import ErrorCode, LocalSubError
 from app.models import DeviceResolution
 from app.segmentation import TimedText
@@ -53,30 +54,17 @@ def model_path_for(model_dir: Path, model_id: str) -> Path:
 
 
 def ensure_model_present(path: Path, model_id: str) -> Path:
-    required = (
-        "openvino_encoder_model.xml",
-        "openvino_decoder_model.xml",
-        "openvino_tokenizer.xml",
+    return ensure_ir_present(
+        path,
+        ("openvino_encoder_model.xml", "openvino_decoder_model.xml", "openvino_tokenizer.xml"),
+        model_id,
+        "models download",
     )
-    missing = [name for name in required if not (path / name).is_file()]
-    if missing:
-        raise LocalSubError(
-            ErrorCode.MODEL_NOT_FOUND,
-            f"Model '{model_id}' not found at {path}. "
-            f"Run: python -m app.main models download {model_id}",
-        )
-    return path
 
 
 def download_model(model_dir: Path, model_id: str) -> Path:
     target = model_path_for(model_dir, model_id)
-    try:
-        from huggingface_hub import snapshot_download
-    except ImportError as exc:
-        raise LocalSubError(
-            ErrorCode.OPENVINO_UNAVAILABLE, "Install extras: pip install -e \".[openvino]\""
-        ) from exc
-    snapshot_download(repo_id=MODEL_CATALOG[model_id], local_dir=str(target))
+    snapshot(MODEL_CATALOG[model_id], target)
     return ensure_model_present(target, model_id)
 
 
@@ -99,66 +87,16 @@ def load_model(
     cache_dir: Path | None = None,
     factory: PipelineFactory = _default_factory,
 ) -> LoadedModel:
-    """Compile the Whisper pipeline on the first working device.
-
-    Explicit device requests never fall back. ``auto`` tries NPU -> GPU -> CPU and records why
-    each earlier candidate was skipped.
-    """
-    available = {d.upper().split(".")[0] for d in available_devices}
-    explicit = requested != "auto"
-    reasons: list[str] = []
-    attempts: list[str] = []
-
-    for device in candidates:
-        if device not in available:
-            if explicit:
-                raise LocalSubError(
-                    ErrorCode.DEVICE_UNAVAILABLE,
-                    f"{device} requested but OpenVINO reports: "
-                    f"{', '.join(available_devices) or 'none'}",
-                )
-            reasons.append(f"{device} not available")
-            continue
-
-        properties: dict[str, Any] = {}
-        if cache_dir is not None:
-            cache_dir.mkdir(parents=True, exist_ok=True)
-            properties["CACHE_DIR"] = str(cache_dir)
-
-        attempts.append(device)
-        started = time.perf_counter()
-        try:
-            pipeline = factory(model_path, device, properties)
-        except LocalSubError:
-            raise
-        except Exception as exc:  # OpenVINO raises RuntimeError subclasses
-            message = str(exc).strip()
-            detail = message.splitlines()[0][:200] if message else type(exc).__name__
-            if explicit:
-                raise LocalSubError(
-                    ErrorCode.MODEL_COMPILE_FAILED, f"Compile on {device} failed: {detail}"
-                ) from exc
-            reasons.append(f"{device} compile failed: {detail}")
-            continue
-
-        load_ms = int((time.perf_counter() - started) * 1000)
-        return LoadedModel(
-            pipeline=pipeline,
-            model_id=model_id,
-            model_path=model_path,
-            device=DeviceResolution(
-                requested=requested,
-                resolved=device,
-                available_devices=available_devices,
-                fallback_reason="; ".join(reasons) or None,
-            ),
-            load_ms=load_ms,
-            attempts=tuple(attempts),
-        )
-
-    raise LocalSubError(
-        ErrorCode.DEVICE_UNAVAILABLE,
-        "No device could run the model: " + ("; ".join(reasons) or "none"),
+    compiled = compile_with_fallback(
+        model_path, requested, candidates, available_devices, factory, cache_dir
+    )
+    return LoadedModel(
+        pipeline=compiled.pipeline,
+        model_id=model_id,
+        model_path=model_path,
+        device=compiled.device,
+        load_ms=compiled.load_ms,
+        attempts=compiled.attempts,
     )
 
 
