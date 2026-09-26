@@ -1,13 +1,15 @@
 {
   "name": "localsub-npu-desktop",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.3.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint src --max-warnings=0",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "tauri": "tauri"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.0.0",
@@ -25,6 +27,7 @@
     "eslint": "^9.9.0",
     "eslint-plugin-react-hooks": "^5.1.0",
     "typescript": "^5.5.4",
-    "vite": "^5.4.2"
+    "vite": "^5.4.2",
+    "vitest": "^2.1.9"
   }
 }
