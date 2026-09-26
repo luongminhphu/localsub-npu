@@ -26,6 +26,23 @@ An idle NPU showing 0% is normal. A valid verification requires a real inference
 - Confirm `cargo --version` works.
 - Run `npm install` inside `apps/desktop`, then `npm run build`.
 
+## `MODEL_NOT_FOUND`
+
+Run `python -m app.main models download <model-id>` from `apps/inference`, or `.\scripts\setup-wave2.ps1 -Model <model-id>`. Confirm `LOCALSUB_MODEL_DIR` points to the same folder for download and transcription.
+
+## `MODEL_COMPILE_FAILED` on NPU
+
+- Update the Intel NPU driver (Lenovo Vantage / Intel driver page) and reboot.
+- Delete `data/models/.ov-cache` and retry.
+- Try a smaller model (`whisper-base-int8`) to separate driver problems from model size limits.
+- Use `--device auto` to fall back to GPU/CPU; the reason is recorded in the job summary.
+
+## First NPU run is slow
+
+Expected: OpenVINO compiles the model for the NPU on first use. Later runs reuse `data/models/.ov-cache`.
+
 ## Subtitles look incorrect
 
-Wave 1 does not transcribe media. In later waves, first verify source language selection, model variant, audio quality, and FFmpeg extraction before changing subtitle segmentation settings.
+- Set `--language vi` explicitly for Vietnamese audio instead of auto-detection.
+- Use a larger model (`whisper-medium-int8` or `whisper-large-v3-turbo-int8`) for Vietnamese.
+- Repeated phrases on long silence are a known Whisper hallucination pattern; trim silence or use a larger model.

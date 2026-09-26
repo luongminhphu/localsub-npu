@@ -30,7 +30,7 @@ export function App() {
           <h1>LocalSub NPU</h1>
           <p className="subtitle">Offline subtitle generation with local models and Intel NPU preference.</p>
         </div>
-        <span className="status-chip" aria-label="Application status">Wave 1 scaffold</span>
+        <span className="status-chip" aria-label="Application status">Wave 2 · CLI pipeline</span>
       </header>
 
       <section className="grid" aria-label="New subtitle job">
@@ -107,9 +107,10 @@ export function App() {
       <section className="panel action-panel" aria-label="Start processing">
         <div>
           <h2>Generate subtitle</h2>
-          <p>Wave 1 validates UI flow only. FFmpeg extraction and Whisper inference arrive in the next vertical slice.</p>
+          <p>The Wave 2 pipeline runs from PowerShell. Wiring this button to the worker arrives in Wave 3.</p>
+          <code>{String.raw`.\scripts\transcribe.ps1 -Source <file> -Language vi -Device NPU`}</code>
         </div>
-        <button type="button" disabled={!canStart} onClick={() => window.alert("Wave 1: job execution is not implemented yet.")}>
+        <button type="button" disabled={!canStart} onClick={() => window.alert(String.raw`Run .\scripts\transcribe.ps1 for now; desktop job execution arrives in Wave 3.`)}>
           Start local job
         </button>
       </section>

@@ -12,7 +12,7 @@ function Test-Command([string]$Name) {
     Write-Warning "$Name was not found on PATH."
     return $false
   }
-  Write-Host "$Name: $($command.Source)" -ForegroundColor Green
+  Write-Host "${Name}: $($command.Source)" -ForegroundColor Green
   return $true
 }
 
