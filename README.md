@@ -8,12 +8,33 @@
 - Sửa phụ đề trực tiếp trong bảng, xuất **SRT, VTT, TXT** và file dự án `.localsub.json`.
 - Media không bao giờ rời khỏi máy. Sau khi tải model lần đầu, không cần Internet và không cần API key.
 
-> Phiên bản hiện tại: **0.4.0 (Wave 3 + tiếng Nhật)**. Chưa có bộ cài (installer); chạy từ mã nguồn theo hướng dẫn bên dưới.
+> Phiên bản hiện tại: **0.5.0 (Wave 4)**. Có **bộ cài Windows** (không cần Python/Node/Rust) — xem
+> [Cài nhanh bằng bộ cài](#cài-nhanh-bằng-bộ-cài). Muốn phát triển hoặc chạy dòng lệnh thì cài từ mã nguồn (mục 2–6).
+
+## Cài nhanh bằng bộ cài
+
+1. Cài FFmpeg (một lần): `winget install --id Gyan.FFmpeg -e`, rồi đăng xuất/đăng nhập lại để PATH có hiệu lực.
+2. Tải file `LocalSub NPU_0.5.0_x64-setup.exe` ở trang
+   [Releases](https://github.com/luongminhphu/localsub-npu/releases) (hoặc artifact
+   `localsub-npu-windows-installer` của workflow **Release** trong tab Actions).
+3. Chạy bộ cài. Bộ cài **chưa được ký số**, nên Windows SmartScreen có thể hiện "Windows protected your PC":
+   bấm **More info → Run anyway**. Ứng dụng cài cho người dùng hiện tại, không cần quyền admin.
+4. Mở **LocalSub NPU**, vào mục **Model** ở cuối trang, bấm **Tải về** cho `whisper-small-int8`
+   (và model dịch nếu cần), rồi dùng như [mục 7](#7-sử-dụng-ứng-dụng-desktop).
+
+Bộ cài chứa sẵn worker đã đóng gói (Python + OpenVINO, khoảng 300–400 MB sau khi cài). Model và phụ đề/nhật ký
+được lưu ở `%LOCALAPPDATA%\com.luongminhphu.localsubnpu\models` và `...\output` (đổi được bằng
+`LOCALSUB_MODEL_DIR` / `LOCALSUB_OUTPUT_DIR`). Gỡ cài đặt qua **Settings → Apps**; thư mục model không bị xóa tự động
+để tránh phải tải lại — xóa tay nếu muốn giải phóng ổ đĩa.
+
+> Nếu máy đã cài bản mã nguồn và đặt `LOCALSUB_WORKER_DIR` / `LOCALSUB_WORKER_PYTHON`, bản cài sẽ ưu tiên dùng
+> worker theo các biến đó. Xóa hai biến này để dùng worker đóng gói sẵn.
 
 ---
 
 ## Mục lục
 
+0. [Cài nhanh bằng bộ cài](#cài-nhanh-bằng-bộ-cài)
 1. [Yêu cầu hệ thống](#1-yêu-cầu-hệ-thống)
 2. [Cài đặt phần mềm nền](#2-cài-đặt-phần-mềm-nền)
 3. [Tải mã nguồn và cài worker](#3-tải-mã-nguồn-và-cài-worker)
@@ -41,7 +62,7 @@
 | RAM | 16 GB tối thiểu; **32 GB** khuyến nghị khi dùng model dịch 7–8B |
 | Ổ đĩa trống | ~1 GB cho Whisper small; thêm ~5 GB cho model dịch 8B; thêm chỗ cho cache biên dịch NPU |
 | Driver | Intel NPU driver và Intel Graphics driver mới nhất |
-| Phần mềm | Git, Python 3.11, FFmpeg; thêm Node.js 22, Rust, Visual Studio C++ Build Tools nếu dùng app desktop |
+| Phần mềm | Bộ cài: chỉ cần FFmpeg. Từ mã nguồn: Git, Python 3.11, FFmpeg; thêm Node.js 22, Rust, Visual Studio C++ Build Tools nếu dùng app desktop |
 
 ---
 
@@ -181,14 +202,20 @@ npm ci                 # lần đầu, cài thư viện giao diện
 npm run tauri dev      # mở cửa sổ ứng dụng (lần đầu biên dịch Rust mất vài phút)
 ```
 
-Đóng gói thành bộ cài MSI/NSIS để dùng hằng ngày:
+Tự đóng gói bộ cài (giống workflow Release trên GitHub):
 
 ```powershell
-npm run tauri build    # kết quả: apps\desktop\src-tauri\target\release\bundle\
+.\scripts\build-worker.ps1          # đóng băng worker bằng PyInstaller -> apps\inference\dist\localsub-worker\ + smoke test
+cd apps\desktop
+npx tauri build --bundles nsis --config src-tauri/tauri.bundle.conf.json
+# kết quả: apps\desktop\src-tauri\target\release\bundle\nsis\LocalSub NPU_0.5.0_x64-setup.exe
 ```
 
-Ứng dụng tự tìm worker tại `apps\inference\.venv\Scripts\python.exe` bằng cách dò ngược từ vị trí file chạy.
-Nếu cài bản đóng gói ra thư mục khác, đặt biến môi trường trỏ về repo:
+`tauri.bundle.conf.json` chỉ dùng khi build bộ cài (thêm thư mục worker vào gói); `npm run tauri dev` không cần nó.
+
+Thứ tự ứng dụng tìm worker: (1) biến `LOCALSUB_WORKER_DIR` / `LOCALSUB_WORKER_PYTHON` nếu có đặt;
+(2) worker đóng gói sẵn trong thư mục cài (`worker\localsub-worker.exe`); (3) `apps\inference\.venv\Scripts\python.exe`
+dò ngược từ vị trí file chạy (chế độ phát triển). Muốn bản cài dùng worker từ mã nguồn, đặt biến môi trường:
 
 ```powershell
 [Environment]::SetEnvironmentVariable("LOCALSUB_WORKER_DIR", "D:\Projects\localsub-npu\apps\inference", "User")
@@ -439,7 +466,7 @@ Chi tiết thêm: [docs/troubleshooting.md](docs/troubleshooting.md).
 
 ```text
 Tauri 2 desktop (React)  --invoke-->  Lệnh Rust (kiểm tra tham số theo danh sách cho phép, không dùng shell)
-        ^                                   | chạy: python -m app.main transcribe ... --events
+        ^                                   | chạy: localsub-worker.exe (bản cài) hoặc python -m app.main (mã nguồn)
         +---- job-event / job-log / job-exit <-+ stdout JSON Lines, stderr log
 
 Python worker
@@ -469,7 +496,10 @@ CI (GitHub Actions) chạy Python lint/test, frontend lint/type-check/test/build
 
 ### Trạng thái kiểm chứng
 
-- 88 unit test Python (3.11 và 3.14), 24 test Vitest, 4 test Rust (thêm 1 test chạy worker thật) đều đạt.
+- 88 unit test Python (3.11 và 3.14), 24 test Vitest, 6 test Rust (thêm 2 test chạy worker thật: mã nguồn và bản đóng gói) đều đạt.
+- Worker đóng gói bằng PyInstaller (Linux, OpenVINO 2026.4, ~313 MB): diagnostics, models list, nhận dạng tiếng Nhật
+  và dịch Nhật→Việt cho kết quả giống hệt bản chạy từ mã nguồn. Bộ cài Windows được build và cài thử (silent) trong
+  workflow Release trên `windows-latest`.
 - Đã tải thật `whisper-base-int8`: ngắt giữa chừng → trạng thái `incomplete` và job báo `MODEL_INCOMPLETE` →
   chạy lại tải tiếp → `installed` → nhận dạng thành công. Kiểm tra dung lượng ổ đĩa đã chặn đúng khi ổ gần đầy.
 - Kiểm tra giao diện bằng Playwright (bản xem trước): tải/dừng/xóa model, lịch sử, đổi VI/EN, màn hình 390 px.
@@ -494,7 +524,10 @@ CI (GitHub Actions) chạy Python lint/test, frontend lint/type-check/test/build
 1. Wave 1: khung ứng dụng, chẩn đoán, trình tạo SRT. ✅
 2. Wave 2: tách âm thanh FFmpeg và nhận dạng Whisper trên OpenVINO ra SRT (dòng lệnh). ✅
 3. Wave 3: app desktop nối với worker, dịch Anh↔Việt bằng LLM trên máy, bảng sửa phụ đề, xuất VTT/TXT/JSON. ✅
-4. Wave 4: bộ cài kèm Python runtime, giao diện tiếng Việt, benchmark, giám sát và hoàn thiện phát hành.
+4. Wave 4: ✅
+   - 4A: quản lý model trong app (tải/tiếp tục/xóa, kiểm tra toàn vẹn), lịch sử xử lý, giao diện tiếng Việt.
+   - 4B: bộ cài Windows NSIS kèm worker đóng gói sẵn (PyInstaller), workflow Release trên GitHub.
+5. Tiếp theo (backlog): benchmark thiết bị ngay trong app, ký số bộ cài, kèm FFmpeg trong bộ cài, tự cập nhật.
 
 ## Giấy phép
 

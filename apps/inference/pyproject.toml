@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "localsub-npu-inference"
-version = "0.4.0"
+version = "0.5.0"
 description = "Local inference worker foundation for LocalSub NPU"
 requires-python = ">=3.11"
 dependencies = []
@@ -19,6 +19,9 @@ openvino = [
   "numpy>=1.26",
   "huggingface_hub>=0.24",
 ]
+
+[tool.setuptools.packages.find]
+include = ["app*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
