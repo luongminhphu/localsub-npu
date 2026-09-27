@@ -158,3 +158,71 @@ def test_degenerate_output_is_retried_then_falls_back() -> None:
     result = translation.translate_lines(make_translator(llm), ["こんにちは"], "ja", "vi")
     assert list(result.lines) == ["こんにちは"] and result.fallback_lines == 1
     assert len(llm.prompts) == 2  # batch + single-line retry
+
+
+def _gpu_translator(llm: FakeLLM) -> translation.LoadedTranslator:
+    return translation.LoadedTranslator(
+        llm, "qwen3-0.6b-int4", DeviceResolution("auto", "GPU", ("GPU",)), 0, ("GPU",)
+    )
+
+
+def test_parallel_batches_share_one_generate_call(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(translation, "_config", lambda tokens: object())
+    llm = FakeLLM()
+    progress: list[tuple[int, int]] = []
+    lines = [f"line {i}" for i in range(1, 11)]
+    result = translation.translate_lines(
+        _gpu_translator(llm), lines, "en", "vi", batch_size=2, parallel=3,
+        on_progress=lambda d, t: progress.append((d, t)),
+    )
+    assert list(result.lines) == [f"[vi] line {i}" for i in range(1, 11)]
+    assert llm.batched_calls == 2  # 5 batches -> groups of 3 + 2
+    assert progress == [(6, 10), (10, 10)]
+    # Context for later batches still comes from the preceding source lines.
+    assert "- line 2" in llm.prompts[1]
+
+
+def test_parallel_retries_rejected_lines_together(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(translation, "_config", lambda tokens: object())
+    llm = FakeLLM(drop={1})
+    result = translation.translate_lines(
+        _gpu_translator(llm), ["a", "b", "c", "d"], "en", "vi", batch_size=2, parallel=2
+    )
+    assert list(result.lines) == ["[vi] a", "[vi] b", "[vi] c", "[vi] d"]
+    # One grouped first pass + one grouped retry of both dropped lines.
+    assert llm.batched_calls == 2
+    assert result.fallback_lines == 0
+
+
+def test_list_generate_failure_falls_back_to_sequential(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(translation, "_config", lambda tokens: object())
+
+    class Stateful(FakeLLM):
+        def generate(self, prompt, config=None, **kwargs):
+            if isinstance(prompt, list):
+                raise RuntimeError("list input not supported")
+            return super().generate(prompt, config, **kwargs)
+
+    llm = Stateful()
+    result = translation.translate_lines(
+        _gpu_translator(llm), ["a", "b", "c"], "en", "vi", batch_size=1, parallel=3
+    )
+    assert list(result.lines) == ["[vi] a", "[vi] b", "[vi] c"]
+    assert len(llm.prompts) == 3
+
+
+def test_parallelism_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("LOCALSUB_TRANSLATION_PARALLEL", raising=False)
+    assert translation.default_parallelism("NPU") == 1
+    assert translation.default_parallelism("GPU") == translation.DEFAULT_PARALLEL
+    monkeypatch.setenv("LOCALSUB_TRANSLATION_PARALLEL", "8")
+    assert translation.default_parallelism("NPU") == 8
+    monkeypatch.setenv("LOCALSUB_TRANSLATION_PARALLEL", "999")
+    assert translation.default_parallelism("CPU") == translation.DEFAULT_PARALLEL
+
+
+def test_auto_translation_prefers_gpu_and_npu_uses_best_perf() -> None:
+    assert translation.candidate_devices("auto") == ["GPU", "NPU", "CPU"]
+    assert translation.candidate_devices("NPU") == ["NPU"]
+    assert translation.npu_properties("NPU")["GENERATE_HINT"] == "BEST_PERF"
+    assert translation.npu_properties("GPU") == {}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatBytes, formatDuration, formatLocal, isStale, offsetLabel, percent } from "./format";
+import { formatBytes, formatDuration, formatLocal, estimateRemainingMs, isStale, offsetLabel, percent } from "./format";
 
 describe("format", () => {
   it("formats byte sizes", () => {
@@ -42,5 +42,14 @@ describe("format", () => {
     expect(isStale(null, now)).toBe(true);
     expect(isStale(new Date("2026-09-26T09:59:00Z"), now)).toBe(false);
     expect(isStale(new Date("2026-09-26T09:57:00Z"), now)).toBe(true);
+  });
+});
+
+describe("estimateRemainingMs", () => {
+  it("extrapolates linearly once there is signal", () => {
+    expect(estimateRemainingMs(25, 100, 10_000)).toBe(30_000);
+    expect(estimateRemainingMs(0, 100, 10_000)).toBeNull();
+    expect(estimateRemainingMs(50, 100, 1_000)).toBeNull();
+    expect(estimateRemainingMs(100, 100, 10_000)).toBeNull();
   });
 });

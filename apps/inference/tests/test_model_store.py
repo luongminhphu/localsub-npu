@@ -149,7 +149,8 @@ def test_history_newest_first_skips_torn_lines_and_hides_paths(tmp_path):
             "source_path": "C:\\Videos\\one.mp4",
             "device": {"requested": "auto", "resolved": "NPU"},
             "real_time_factor": 0.2,
-            "timings_ms": {"total": 1000},
+            "source_duration_ms": 4000,
+            "timings_ms": {"total": 1000, "inference": 800, "translation": 150},
         },
         {"job_id": "b", "state": "failed", "source_path": "/x/two.mkv", "error_code": "X"},
     ]
@@ -157,6 +158,9 @@ def test_history_newest_first_skips_torn_lines_and_hides_paths(tmp_path):
     out = history.recent_jobs(log, limit=10)
     assert [j["job_id"] for j in out["jobs"]] == ["b", "a"]
     assert out["jobs"][1]["source_name"] == "one.mp4" and out["jobs"][1]["total_ms"] == 1000
+    # Stage breakdown and whole-job RTF (ASR-only RTF hid translation time).
+    assert out["jobs"][1]["asr_ms"] == 800 and out["jobs"][1]["translation_ms"] == 150
+    assert out["jobs"][1]["total_rtf"] == 0.25 and out["jobs"][0]["total_rtf"] is None
     assert out["skipped_lines"] == 1
     assert out["stats"] == {
         "total": 2,
@@ -164,7 +168,7 @@ def test_history_newest_first_skips_torn_lines_and_hides_paths(tmp_path):
         "failed": 1,
         "npu_share": 1.0,
         "fallbacks": 0,
-        "median_rtf": 0.2,
+        "median_rtf": 0.25,
     }
     assert "text" not in json.dumps(out["jobs"])
 

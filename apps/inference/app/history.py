@@ -48,10 +48,21 @@ def summarize(record: dict[str, Any]) -> dict[str, Any]:
         "source_duration_ms": record.get("source_duration_ms"),
         "total_ms": timings.get("total"),
         "real_time_factor": record.get("real_time_factor"),
+        "total_rtf": _ratio(timings.get("total"), record.get("source_duration_ms")),
+        "asr_ms": timings.get("inference"),
+        "translation_ms": timings.get("translation"),
         "cue_count": record.get("cue_count"),
         "translation_fallback_lines": record.get("translation_fallback_lines"),
         "error_code": record.get("error_code"),
     }
+
+
+def _ratio(numerator: Any, denominator: Any) -> float | None:
+    if not isinstance(numerator, int | float) or not isinstance(denominator, int | float):
+        return None
+    if denominator <= 0:
+        return None
+    return round(numerator / denominator, 4)
 
 
 def recent_jobs(log_path: Path, limit: int = 20) -> dict[str, Any]:
@@ -82,7 +93,8 @@ def recent_jobs(log_path: Path, limit: int = 20) -> dict[str, Any]:
 def _stats(jobs: list[dict[str, Any]]) -> dict[str, Any]:
     done = [j for j in jobs if j["state"] == "completed"]
     failed = [j for j in jobs if j["state"] == "failed"]
-    rtfs = [j["real_time_factor"] for j in done if isinstance(j["real_time_factor"], int | float)]
+    # Total RTF (whole job) is what the user waits for; ASR-only RTF hid translation time.
+    rtfs = [j["total_rtf"] for j in done if isinstance(j["total_rtf"], int | float)]
     npu = [j for j in done if (j["device"] or {}).get("resolved") == "NPU"]
     fallbacks = [j for j in jobs if (j["device"] or {}).get("fallback_reason")]
     return {

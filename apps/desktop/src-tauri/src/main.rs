@@ -1,5 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod metrics;
 mod worker;
 
 use std::io::{BufRead, BufReader, Write};
@@ -49,6 +50,12 @@ fn run_to_string(args: &[String], stdin: Option<&str>) -> Result<String, String>
         let last = stderr.lines().last().unwrap_or("worker failed").to_string();
         Err(last)
     }
+}
+
+/// Latest CPU/GPU/NPU samples newer than `since_ms`; starts the sampler on first call.
+#[tauri::command]
+fn system_metrics(monitor: State<'_, metrics::Monitor>, since_ms: Option<u64>) -> metrics::Snapshot {
+    monitor.snapshot(since_ms)
 }
 
 #[tauri::command]
@@ -250,8 +257,10 @@ fn main() {
         })
         .manage(JobState::default())
         .manage(DownloadState::default())
+        .manage(metrics::Monitor::default())
         .invoke_handler(tauri::generate_handler![
             worker_location,
+            system_metrics,
             run_diagnostics,
             list_models,
             start_job,

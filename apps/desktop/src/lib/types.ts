@@ -69,7 +69,7 @@ export interface JobView {
   asrFallback: string | null;
   translationDevice: string | null;
   translationFallback: string | null;
-  progress: { done: number; total: number } | null;
+  progress: { stage: string | null; done: number; total: number } | null;
   outputs: string[];
   error: string | null;
   summary: Record<string, unknown> | null;
@@ -149,6 +149,9 @@ export interface HistoryJob {
   cue_count: number | null;
   translation_fallback_lines: number | null;
   error_code: string | null;
+  total_rtf?: number | null;
+  asr_ms?: number | null;
+  translation_ms?: number | null;
 }
 
 export interface JobHistory {
@@ -163,4 +166,25 @@ export interface JobHistory {
     fallbacks: number;
     median_rtf: number | null;
   };
+}
+
+export type MetricKey = "cpu" | "gpu" | "npu";
+
+export interface MetricSample {
+  at_ms: number;
+  cpu: number | null;
+  gpu: number | null;
+  npu: number | null;
+  mem_used_bytes: number | null;
+  mem_total_bytes: number | null;
+}
+
+export interface MetricsSnapshot {
+  /** windows-pdh = live counters, starting = no sample yet, unsupported/error = unavailable. */
+  source: "windows-pdh" | "starting" | "unsupported" | "error" | "preview";
+  interval_ms: number;
+  gpu_name: string | null;
+  npu_name: string | null;
+  error: string | null;
+  samples: MetricSample[];
 }

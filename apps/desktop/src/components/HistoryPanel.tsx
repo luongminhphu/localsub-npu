@@ -104,7 +104,26 @@ export function HistoryPanel(props: { bridge: WorkerBridge | null; refreshKey: n
                       <td>{lang}</td>
                       <td title={fallback ?? undefined}>{dev}{tdev}{fallback ? " *" : ""}</td>
                       <td className="num">{formatDuration(j.source_duration_ms)}</td>
-                      <td className="num">{j.real_time_factor ?? "—"}</td>
+                      <td
+                        className="num"
+                        title={t("history.breakdown", {
+                          asr: formatDuration(j.asr_ms),
+                          translation: j.translate_to ? formatDuration(j.translation_ms) : "—",
+                          total: formatDuration(j.total_ms),
+                        })}
+                      >
+                        {j.total_rtf ?? j.real_time_factor ?? "—"}
+                        {j.total_ms ? (
+                          <span className="sub-num">
+                            {j.asr_ms
+                              ? t("history.breakdownShort", {
+                                  asr: formatDuration(j.asr_ms),
+                                  translation: j.translate_to ? formatDuration(j.translation_ms) : "—",
+                                })
+                              : formatDuration(j.total_ms)}
+                          </span>
+                        ) : null}
+                      </td>
                       <td>
                         <span className={`state-pill ${j.state ?? ""}`} title={j.error_code ?? undefined}>
                           {key ? t(key) : (j.state ?? "—")}
