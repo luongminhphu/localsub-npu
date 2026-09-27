@@ -6,6 +6,7 @@ input cue; timestamps are never sent to or changed by the model.
 
 from __future__ import annotations
 
+import os
 import re
 import time
 import unicodedata
@@ -33,6 +34,14 @@ SOURCE_LANGUAGES = ("en", "ja", "vi")
 TARGET_LANGUAGES = ("en", "vi")
 DEFAULT_BATCH_SIZE = 8
 CONTEXT_LINES = 2
+# Batches submitted to one generate() call. CPU/GPU pipelines run a list of prompts with
+# continuous batching (measured ~2.4x faster than sequential batches on CPU); the NPU LLM
+# pipeline is stateful and single-sequence, so it stays at 1.
+DEFAULT_PARALLEL = 4
+MAX_PARALLEL = 16
+# "auto" for translation prefers the GPU: it batches prompts and leaves the NPU free for
+# Whisper. Users can still pick NPU explicitly.
+AUTO_TRANSLATION_DEVICES = ("GPU", "NPU", "CPU")
 
 LLMFactory = Callable[[Path, str, dict[str, Any]], Any]
 ProgressSink = Callable[[int, int], None]
@@ -88,10 +97,25 @@ def download_model(model_dir: Path, model_id: str) -> Path:
     return model_store.download(model_dir, model_id).path
 
 
+def candidate_devices(preference: str) -> list[str]:
+    if preference == "auto":
+        return list(AUTO_TRANSLATION_DEVICES)
+    return [preference]
+
+
+def default_parallelism(device: str | None) -> int:
+    """Prompts per generate() call for the resolved device (env override for tuning)."""
+    raw = os.getenv("LOCALSUB_TRANSLATION_PARALLEL", "").strip()
+    if raw.isdigit() and 1 <= int(raw) <= MAX_PARALLEL:
+        return int(raw)
+    return 1 if device == "NPU" else DEFAULT_PARALLEL
+
+
 def npu_properties(device: str) -> dict[str, Any]:
     # NPU compiles static shapes: reserve room for a batch prompt and its translation.
+    # BEST_PERF trades a slower first compile (cached afterwards) for faster token decode.
     if device == "NPU":
-        return {"MAX_PROMPT_LEN": 1536, "MIN_RESPONSE_LEN": 768}
+        return {"MAX_PROMPT_LEN": 1536, "MIN_RESPONSE_LEN": 768, "GENERATE_HINT": "BEST_PERF"}
     return {}
 
 
@@ -178,18 +202,39 @@ def _prompt(pipeline: Any, messages: list[dict[str, str]]) -> str:
         return tokenizer.apply_chat_template(messages, add_generation_prompt=True)
 
 
+def _config(max_new_tokens: int) -> Any:
+    import openvino_genai
+
+    config = openvino_genai.GenerationConfig()
+    config.max_new_tokens = max_new_tokens
+    config.do_sample = False
+    if hasattr(config, "apply_chat_template"):
+        config.apply_chat_template = False
+    return config
+
+
 def _generate(pipeline: Any, prompt: str, max_new_tokens: int) -> str:
     try:
-        import openvino_genai
-
-        config = openvino_genai.GenerationConfig()
-        config.max_new_tokens = max_new_tokens
-        config.do_sample = False
-        if hasattr(config, "apply_chat_template"):
-            config.apply_chat_template = False
-        return str(pipeline.generate(prompt, config))
+        config = _config(max_new_tokens)
     except ImportError:
         return str(pipeline.generate(prompt, max_new_tokens=max_new_tokens))
+    return str(pipeline.generate(prompt, config))
+
+
+def _generate_many(pipeline: Any, prompts: Sequence[str], max_new_tokens: int) -> list[str]:
+    """Run several prompts in one call when the pipeline supports it, else one by one."""
+    if len(prompts) > 1:
+        try:
+            config = _config(max_new_tokens)
+            result = pipeline.generate(list(prompts), config)
+            texts = list(getattr(result, "texts", None) or [])
+            if len(texts) == len(prompts):
+                return [str(t) for t in texts]
+        except ImportError:
+            pass
+        except Exception:  # noqa: BLE001 - e.g. a stateful pipeline rejecting a list
+            pass  # fall through: the sequential path reports real generation errors
+    return [_generate(pipeline, p, max_new_tokens) for p in prompts]
 
 
 _PLACEHOLDER = re.compile(r"^(?:N\s*[.)]\s*)?(?:text|translation)?\s*[.]?$", re.IGNORECASE)
@@ -220,41 +265,57 @@ def translate_lines(
     target: str,
     batch_size: int = DEFAULT_BATCH_SIZE,
     on_progress: ProgressSink | None = None,
+    parallel: int | None = None,
 ) -> TranslationResult:
     if source == target:
         return TranslationResult(tuple(lines), 0, 0)
     started = time.perf_counter()
+    if parallel is None:
+        parallel = default_parallelism(translator.device.resolved)
+    parallel = max(1, min(parallel, MAX_PARALLEL))
     output: list[str] = []
     fallbacks = 0
     total = len(lines)
 
-    def run(batch: Sequence[str], context: Sequence[str]) -> list[str | None]:
-        messages = build_messages(batch, source, target, context)
-        tokens = 64 + 48 * len(batch)
+    def run(jobs: Sequence[tuple[Sequence[str], Sequence[str]]]) -> list[list[str | None]]:
+        """Translate (batch, context) pairs; context comes from source lines, so batches
+        are independent and can share one generate() call."""
+        pipeline = translator.pipeline
+        prompts = [_prompt(pipeline, build_messages(b, source, target, c)) for b, c in jobs]
+        tokens = 64 + 48 * max(len(b) for b, _ in jobs)
         try:
-            raw = _generate(translator.pipeline, _prompt(translator.pipeline, messages), tokens)
+            raws = _generate_many(pipeline, prompts, tokens)
         except Exception as exc:
             raise LocalSubError(
                 ErrorCode.TRANSLATION_FAILED, f"LLM generation failed: {str(exc)[:200]}"
             ) from exc
         return [
-            plausible(v, src) for v, src in zip(parse_numbered(raw, len(batch)), batch, strict=True)
+            [plausible(v, src) for v, src in zip(parse_numbered(raw, len(b)), b, strict=True)]
+            for raw, (b, _) in zip(raws, jobs, strict=True)
         ]
 
-    for offset in range(0, total, batch_size):
-        batch = list(lines[offset : offset + batch_size])
-        context = lines[max(0, offset - CONTEXT_LINES) : offset]
-        parsed = run(batch, context)
-        for i, value in enumerate(parsed):
-            if value is None:
-                # Retry the single line; if the model still fails keep the source text so the
-                # editor can fix it rather than silently dropping a cue.
-                retry = run([batch[i]], context)[0]
-                if retry is None:
+    offsets = list(range(0, total, batch_size))
+    for g in range(0, len(offsets), parallel):
+        group = [
+            (list(lines[o : o + batch_size]), list(lines[max(0, o - CONTEXT_LINES) : o]))
+            for o in offsets[g : g + parallel]
+        ]
+        parsed = run(group)
+        # Retry every rejected line of the group together (single-line prompts), then keep
+        # the source text for lines the model still fails so the editor can fix them.
+        misses = [
+            (b, i) for b, values in enumerate(parsed) for i, v in enumerate(values) if v is None
+        ]
+        for start_idx in range(0, len(misses), parallel):
+            chunk = misses[start_idx : start_idx + parallel]
+            retried = run([([group[b][0][i]], group[b][1]) for b, i in chunk])
+            for (b, i), values in zip(chunk, retried, strict=True):
+                if values[0] is None:
                     fallbacks += 1
-                parsed[i] = retry or batch[i]
-        output.extend(v or "" for v in parsed)
+                parsed[b][i] = values[0] or group[b][0][i]
+        for values in parsed:
+            output.extend(v or "" for v in values)
         if on_progress:
-            on_progress(min(offset + batch_size, total), total)
+            on_progress(len(output), total)
 
     return TranslationResult(tuple(output), fallbacks, int((time.perf_counter() - started) * 1000))

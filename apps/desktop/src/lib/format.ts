@@ -57,3 +57,9 @@ export function formatDuration(ms: number | null | undefined): string {
 export function isStale(fetchedAt: Date | null, now: Date, maxAgeMs = 120_000): boolean {
   return !fetchedAt || now.getTime() - fetchedAt.getTime() > maxAgeMs;
 }
+
+/** Remaining time from linear progress; null until there is enough signal to be useful. */
+export function estimateRemainingMs(done: number, total: number, elapsedMs: number): number | null {
+  if (!(total > 0) || !(done > 0) || done >= total || !(elapsedMs >= 3_000)) return null;
+  return Math.round((elapsedMs * (total - done)) / done);
+}

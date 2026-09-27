@@ -95,3 +95,58 @@ def test_transcribe_auto_language_omits_token(tmp_path: Path) -> None:
     model = whisper.LoadedModel(pipe, "m", tmp_path, None, 0, ())  # type: ignore[arg-type]
     whisper.transcribe(model, [0.0], language="auto", task="translate")
     assert "language" not in pipe.kwargs and pipe.kwargs["task"] == "translate"
+
+
+class ChunkedPipeline:
+    """Returns one chunk per call and records the language token it was given."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[int, dict]] = []
+
+    def generate(self, samples, **kwargs):
+        self.calls.append((len(samples), dict(kwargs)))
+
+        class R:
+            chunks = [Chunk(0.5, 2.0, " hello")]
+            texts = ["hello"]
+            language = "<|en|>"
+
+        return R()
+
+
+def _speech(seconds: float, rate: int = 16_000) -> list[float]:
+    return [0.2 if i % 2 else -0.2 for i in range(int(seconds * rate))]
+
+
+def test_split_points_cut_at_quiet_frame() -> None:
+    rate = 100  # tiny rate keeps the test fast; the logic is rate independent
+    samples = _speech(30, rate)
+    for i in range(int(9.5 * rate), int(9.8 * rate)):
+        samples[i] = 0.0
+    ranges = whisper.split_points(samples, rate, chunk_seconds=10, search_seconds=2)
+    assert ranges[0][0] == 0 and ranges[-1][1] == len(samples)
+    assert all(a[1] == b[0] for a, b in zip(ranges, ranges[1:], strict=False))
+    assert 950 <= ranges[0][1] < 980  # inside the silent gap, not at exactly 10 s
+    assert whisper.split_points([], rate) == []
+    assert whisper.split_points(_speech(5, rate), rate, 10, 2) == [(0, 500)]
+
+
+def test_chunked_transcribe_offsets_progress_silence_and_pinned_language(
+    tmp_path: Path, monkeypatch
+) -> None:
+    rate = whisper.SAMPLE_RATE
+    samples = _speech(4) + [0.0] * (4 * rate) + _speech(4)
+    spans = [(0, 4 * rate), (4 * rate, 8 * rate), (8 * rate, 12 * rate)]
+    monkeypatch.setattr(whisper, "split_points", lambda s, r, c: spans)
+    pipe = ChunkedPipeline()
+    model = whisper.LoadedModel(pipe, "m", tmp_path, None, 0, ())  # type: ignore[arg-type]
+    progress: list[tuple[int, int]] = []
+    result = whisper.transcribe(
+        model, samples, language="auto", on_progress=lambda d, t: progress.append((d, t))
+    )
+    assert len(pipe.calls) == 2  # the silent middle chunk is skipped
+    assert "language" not in pipe.calls[0][1]
+    assert pipe.calls[1][1]["language"] == "<|en|>"  # detected once, then pinned
+    assert [(s.start_ms, s.end_ms) for s in result.segments] == [(500, 2000), (8500, 10000)]
+    assert progress == [(4000, 12000), (8000, 12000), (12000, 12000)]
+    assert result.detected_language == "en"

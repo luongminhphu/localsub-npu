@@ -1,6 +1,6 @@
 [package]
 name = "localsub-npu"
-version = "0.5.0"
+version = "0.6.0"
 description = "Offline local subtitle generation with Intel NPU preference"
 authors = ["Minh Phu Luong"]
 edition = "2021"
@@ -12,6 +12,10 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
 serde = { version = "1", features = ["derive"] }
+
+# Same windows-rs version Tauri already pulls in; only extra API features are enabled.
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Performance", "Win32_System_SystemInformation", "Win32_Graphics_DXCore"] }
 
 [features]
 custom-protocol = ["tauri/custom-protocol"]

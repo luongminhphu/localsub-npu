@@ -107,45 +107,124 @@ def load_model(
     )
 
 
+SAMPLE_RATE = 16_000
+# Long media is transcribed in ~5 minute chunks cut at the quietest point near each target,
+# so the UI gets progress, memory per call stays bounded and fully silent chunks are skipped.
+CHUNK_SECONDS = 300
+SEARCH_SECONDS = 10
+FRAME_SECONDS = 0.1
+SILENCE_PEAK = 0.003  # ~-50 dBFS: nothing Whisper could transcribe, only hallucinate on
+
+ProgressSink = Callable[[int, int], None]
+
+
+def _frame_energy(samples: Sequence[float], start: int, stop: int) -> float:
+    try:
+        import numpy as np
+
+        window = np.asarray(samples[start:stop], dtype=np.float32)
+        return float(np.mean(window * window)) if window.size else 0.0
+    except ImportError:  # pragma: no cover - numpy ships with OpenVINO
+        window = samples[start:stop]
+        return sum(x * x for x in window) / len(window) if window else 0.0
+
+
+def split_points(
+    samples: Sequence[float],
+    sample_rate: int = SAMPLE_RATE,
+    chunk_seconds: float = CHUNK_SECONDS,
+    search_seconds: float = SEARCH_SECONDS,
+) -> list[tuple[int, int]]:
+    """Return [start, stop) sample ranges covering the audio, cut at quiet frames."""
+    total = len(samples)
+    chunk = int(chunk_seconds * sample_rate)
+    if chunk <= 0 or total <= chunk + int(search_seconds * sample_rate):
+        return [(0, total)] if total else []
+    frame = max(1, int(FRAME_SECONDS * sample_rate))
+    search = int(search_seconds * sample_rate)
+    ranges: list[tuple[int, int]] = []
+    begin = 0
+    while total - begin > chunk + search:
+        target = begin + chunk
+        best, best_energy = target, float("inf")
+        for pos in range(target - search, target + search, frame):
+            energy = _frame_energy(samples, pos, pos + frame)
+            if energy < best_energy:
+                best, best_energy = pos, energy
+        ranges.append((begin, best))
+        begin = best
+    ranges.append((begin, total))
+    return ranges
+
+
+def _is_silent(samples: Sequence[float]) -> bool:
+    try:
+        import numpy as np
+
+        window = np.asarray(samples, dtype=np.float32)
+        return bool(window.size) and float(np.max(np.abs(window))) < SILENCE_PEAK
+    except ImportError:  # pragma: no cover
+        return bool(samples) and max(abs(x) for x in samples) < SILENCE_PEAK
+
+
+def _language_token(result: Any) -> str | None:
+    detected = getattr(result, "language", None)
+    if isinstance(detected, str):
+        return detected.strip("<|>") or None
+    return None
+
+
 def transcribe(
     model: LoadedModel,
     samples: Sequence[float],
     language: str = "auto",
     task: str = "transcribe",
+    on_progress: ProgressSink | None = None,
+    chunk_seconds: float = CHUNK_SECONDS,
 ) -> TranscriptionResult:
+    """Transcribe chunk by chunk; ``on_progress(done_ms, total_ms)`` after each chunk."""
     if language not in LANGUAGES:
         raise ValueError(f"language must be one of {sorted(LANGUAGES)}")
     if task not in TASKS:
         raise ValueError(f"task must be one of {sorted(TASKS)}")
-
-    kwargs: dict[str, Any] = {"task": task, "return_timestamps": True}
-    if language != "auto":
-        kwargs["language"] = f"<|{language}|>"
-
     started = time.perf_counter()
-    try:
-        result = model.pipeline.generate(samples, **kwargs)
-    except Exception as exc:
-        raise LocalSubError(
-            ErrorCode.TRANSCRIPTION_FAILED, f"Whisper inference failed: {str(exc)[:200]}"
-        ) from exc
-    inference_ms = int((time.perf_counter() - started) * 1000)
-
+    total_ms = int(len(samples) * 1000 / SAMPLE_RATE)
     segments: list[TimedText] = []
-    for chunk in getattr(result, "chunks", None) or []:
-        start = float(chunk.start_ts)
-        end = float(chunk.end_ts) if chunk.end_ts is not None else -1.0
-        segments.append(
-            TimedText(
-                start_ms=int(round(start * 1000)),
-                end_ms=int(round(end * 1000)) if end >= 0 else None,
-                text=chunk.text,
-            )
-        )
-    if not segments and getattr(result, "texts", None):
-        segments.append(TimedText(0, None, " ".join(result.texts)))
-
-    detected = getattr(result, "language", None)
-    if isinstance(detected, str):
-        detected = detected.strip("<|>") or None
+    detected: str | None = None
+    ranges = split_points(samples, SAMPLE_RATE, chunk_seconds)
+    for begin, stop in ranges:
+        piece = samples[begin:stop]
+        offset_ms = int(round(begin * 1000 / SAMPLE_RATE))
+        # Only long media skips silent chunks; a short clip always goes to the model.
+        if len(ranges) == 1 or not _is_silent(piece):
+            kwargs: dict[str, Any] = {"task": task, "return_timestamps": True}
+            # Detect once on the first spoken chunk, then pin the language so later chunks
+            # skip detection and cannot flip language mid-video.
+            pinned = language if language != "auto" else detected
+            if pinned:
+                kwargs["language"] = f"<|{pinned}|>"
+            try:
+                result = model.pipeline.generate(piece, **kwargs)
+            except Exception as exc:
+                raise LocalSubError(
+                    ErrorCode.TRANSCRIPTION_FAILED, f"Whisper inference failed: {str(exc)[:200]}"
+                ) from exc
+            if detected is None:
+                detected = _language_token(result)
+            chunks = getattr(result, "chunks", None) or []
+            for chunk in chunks:
+                start = float(chunk.start_ts)
+                end = float(chunk.end_ts) if chunk.end_ts is not None else -1.0
+                segments.append(
+                    TimedText(
+                        start_ms=offset_ms + int(round(start * 1000)),
+                        end_ms=offset_ms + int(round(end * 1000)) if end >= 0 else None,
+                        text=chunk.text,
+                    )
+                )
+            if not chunks and getattr(result, "texts", None):
+                segments.append(TimedText(offset_ms, None, " ".join(result.texts)))
+        if on_progress:
+            on_progress(min(total_ms, int(round(stop * 1000 / SAMPLE_RATE))), total_ms)
+    inference_ms = int((time.perf_counter() - started) * 1000)
     return TranscriptionResult(tuple(segments), detected, inference_ms)

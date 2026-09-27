@@ -194,7 +194,23 @@ def run_job(
             device=model.device.resolved,
             fallback_reason=model.device.fallback_reason,
         )
-        result = whisper.transcribe(model, samples, request.language, request.task)
+        send(
+            {
+                "type": "progress",
+                "stage": "transcribing",
+                "done": 0,
+                "total": record.source_duration_ms or 0,
+            }
+        )
+        result = whisper.transcribe(
+            model,
+            samples,
+            request.language,
+            request.task,
+            on_progress=lambda done, total: send(
+                {"type": "progress", "stage": "transcribing", "done": done, "total": total}
+            ),
+        )
         record.timings_ms["inference"] = result.inference_ms
         record.detected_language = result.detected_language
         if record.source_duration_ms:
@@ -230,7 +246,7 @@ def run_job(
                 llm_path,
                 request.translation_model,
                 llm_settings.device_preference,
-                llm_settings.preferred_devices(),
+                translation.candidate_devices(llm_settings.device_preference),
                 available,
                 cache_dir=settings.model_dir / ".ov-cache",
                 **llm_kwargs,

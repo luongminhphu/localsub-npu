@@ -8,6 +8,7 @@ import type {
   DownloadHandlers,
   JobConfig,
   JobHistory,
+  MetricsSnapshot,
   LocalSubProject,
   ModelInfo,
   WorkerEvent,
@@ -37,6 +38,7 @@ export interface WorkerBridge {
   cancelDownload(): Promise<boolean>;
   removeModel(modelId: string): Promise<void>;
   history(limit: number): Promise<JobHistory>;
+  systemMetrics(sinceMs: number | null): Promise<MetricsSnapshot>;
   confirm(message: string, title: string): Promise<boolean>;
 }
 
@@ -151,6 +153,7 @@ async function tauriBridge(): Promise<WorkerBridge> {
       await invoke<string>("remove_model", { modelId });
     },
     history: async (limit) => JSON.parse(await invoke<string>("job_history", { limit })) as JobHistory,
+    systemMetrics: (sinceMs) => invoke<MetricsSnapshot>("system_metrics", { sinceMs }),
     confirm: (message, title) => dialog.ask(message, { title, kind: "warning" }),
   };
 }
@@ -181,9 +184,9 @@ function previewHistory(): JobHistory {
   const iso = (minutesAgo: number) => new Date(now - minutesAgo * 60_000).toISOString();
   const npu = { requested: "auto", resolved: "NPU", fallback_reason: null };
   const jobs: JobHistory["jobs"] = [
-    { job_id: "a1", started_at: iso(12), finished_at: iso(10), state: "completed", source_name: "market-briefing.mp4", language: "auto", detected_language: "en", translate_to: "vi", model_id: "whisper-small-int8", translation_model: "qwen3-8b-int4-cw", device: npu, translation_device: npu, source_duration_ms: 612_000, total_ms: 98_400, real_time_factor: 0.161, cue_count: 142, translation_fallback_lines: 0, error_code: null },
-    { job_id: "a2", started_at: iso(95), finished_at: iso(94), state: "failed", source_name: "interview-ja.mkv", language: "ja", detected_language: null, translate_to: "en", model_id: "whisper-large-v3-turbo-int8", translation_model: "qwen3-8b-int4-cw", device: null, translation_device: null, source_duration_ms: null, total_ms: 1_200, real_time_factor: null, cue_count: null, translation_fallback_lines: null, error_code: "MODEL_INCOMPLETE" },
-    { job_id: "a3", started_at: iso(1440), finished_at: iso(1436), state: "completed", source_name: "town-hall.mp4", language: "auto", detected_language: "vi", translate_to: "en", model_id: "whisper-small-int8", translation_model: "qwen3-4b-int4", device: { requested: "auto", resolved: "GPU", fallback_reason: "NPU compile failed" }, translation_device: npu, source_duration_ms: 1_800_000, total_ms: 240_000, real_time_factor: 0.133, cue_count: 410, translation_fallback_lines: 2, error_code: null },
+    { job_id: "a1", started_at: iso(12), finished_at: iso(10), state: "completed", source_name: "market-briefing.mp4", language: "auto", detected_language: "en", translate_to: "vi", model_id: "whisper-small-int8", translation_model: "qwen3-8b-int4-cw", device: npu, translation_device: npu, source_duration_ms: 612_000, total_ms: 98_400, real_time_factor: 0.07, total_rtf: 0.161, asr_ms: 42_800, translation_ms: 51_300, cue_count: 142, translation_fallback_lines: 0, error_code: null },
+    { job_id: "a2", started_at: iso(95), finished_at: iso(94), state: "failed", source_name: "interview-ja.mkv", language: "ja", detected_language: null, translate_to: "en", model_id: "whisper-large-v3-turbo-int8", translation_model: "qwen3-8b-int4-cw", device: null, translation_device: null, source_duration_ms: null, total_ms: 1_200, real_time_factor: null, total_rtf: null, asr_ms: null, translation_ms: null, cue_count: null, translation_fallback_lines: null, error_code: "MODEL_INCOMPLETE" },
+    { job_id: "a3", started_at: iso(1440), finished_at: iso(1436), state: "completed", source_name: "town-hall.mp4", language: "auto", detected_language: "vi", translate_to: "en", model_id: "whisper-small-int8", translation_model: "qwen3-4b-int4", device: { requested: "auto", resolved: "GPU", fallback_reason: "NPU compile failed" }, translation_device: npu, source_duration_ms: 1_800_000, total_ms: 240_000, real_time_factor: 0.05, total_rtf: 0.133, asr_ms: 90_000, translation_ms: 141_000, cue_count: 410, translation_fallback_lines: 2, error_code: null },
   ];
   return {
     log_path: "data/output/logs/jobs.jsonl",
@@ -299,6 +302,7 @@ function previewBridge(): WorkerBridge {
       installed.delete(modelId);
     },
     history: async () => previewHistory(),
+    systemMetrics: async (sinceMs) => previewMetrics(sinceMs),
     confirm: async (message) => window.confirm(message),
   };
 }
@@ -308,4 +312,32 @@ let bridge: Promise<WorkerBridge> | null = null;
 export function getBridge(): Promise<WorkerBridge> {
   bridge ??= isTauri() ? tauriBridge() : Promise.resolve(previewBridge());
   return bridge;
+}
+
+/** Simulated load for the browser preview: NPU busy while transcribing, GPU while translating. */
+export function previewMetrics(sinceMs: number | null, now = Date.now()): MetricsSnapshot {
+  const samples: MetricsSnapshot["samples"] = [];
+  const last = Math.floor(now / 1000) * 1000;
+  const from = Math.max(sinceMs === null ? last - 180_000 : sinceMs + 1000, last - 300_000);
+  for (let at = Math.ceil(from / 1000) * 1000; at <= last; at += 1000) {
+    const t = at / 1000;
+    const phase = Math.floor(t / 60) % 3; // 0 idle, 1 ASR on NPU, 2 translation on GPU
+    const wave = (k: number) => (Math.sin(t / k) + 1) / 2;
+    samples.push({
+      at_ms: at,
+      cpu: Math.round((12 + 18 * wave(7) + (phase ? 15 : 0)) * 10) / 10,
+      gpu: Math.round((phase === 2 ? 70 + 20 * wave(5) : 4 + 4 * wave(9)) * 10) / 10,
+      npu: Math.round((phase === 1 ? 65 + 25 * wave(4) : phase === 2 ? 3 : 0) * 10) / 10,
+      mem_used_bytes: Math.round((9.5 + (phase ? 5 : 0) + wave(30)) * 1024 ** 3),
+      mem_total_bytes: 32 * 1024 ** 3,
+    });
+  }
+  return {
+    source: "preview",
+    interval_ms: 1000,
+    gpu_name: "Intel(R) Arc(TM) 140V GPU (preview)",
+    npu_name: "Intel(R) AI Boost (preview)",
+    error: null,
+    samples,
+  };
 }

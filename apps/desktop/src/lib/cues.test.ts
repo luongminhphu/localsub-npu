@@ -99,7 +99,7 @@ describe("job reducer", () => {
     expect(state.asrDevice).toBe("CPU");
     expect(state.asrFallback).toBe("NPU not available");
     expect(state.translationDevice).toBe("NPU");
-    expect(state.progress).toEqual({ done: 2, total: 2 });
+    expect(state.progress).toEqual({ stage: "translating", done: 2, total: 2 });
     expect(state.outputs).toEqual(["/o/talk.en.srt"]);
     expect(state.project?.cues).toHaveLength(2);
   });

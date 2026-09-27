@@ -184,7 +184,7 @@ export function jobReducer(state: JobView, action: JobAction): JobView {
 
 function applyEvent(state: JobView, e: WorkerEvent): JobView {
   if (e.type === "progress") {
-    const next = { ...state, progress: { done: e.done ?? 0, total: e.total ?? 0 } };
+    const next = { ...state, progress: { stage: e.stage ?? null, done: e.done ?? 0, total: e.total ?? 0 } };
     if (e.device) {
       next.translationDevice = e.device;
       next.translationFallback = e.fallback_reason ?? null;
@@ -204,7 +204,7 @@ function applyEvent(state: JobView, e: WorkerEvent): JobView {
     next.asrDevice = e.device ?? null;
     next.asrFallback = e.fallback_reason ?? null;
   }
-  if (e.state === "translating") next.progress = null;
+  if (e.state === "transcribing" || e.state === "translating") next.progress = null;
   if (e.state === "completed") {
     next.status = "completed";
     next.outputs = e.outputs ?? [];

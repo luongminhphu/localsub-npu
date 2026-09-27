@@ -8,13 +8,13 @@
 - Sửa phụ đề trực tiếp trong bảng, xuất **SRT, VTT, TXT** và file dự án `.localsub.json`.
 - Media không bao giờ rời khỏi máy. Sau khi tải model lần đầu, không cần Internet và không cần API key.
 
-> Phiên bản hiện tại: **0.5.0 (Wave 4)**. Có **bộ cài Windows** (không cần Python/Node/Rust) — xem
+> Phiên bản hiện tại: **0.6.0 (Wave 5A: tối ưu tốc độ và chart tải CPU/GPU/NPU)**. Có **bộ cài Windows** (không cần Python/Node/Rust) — xem
 > [Cài nhanh bằng bộ cài](#cài-nhanh-bằng-bộ-cài). Muốn phát triển hoặc chạy dòng lệnh thì cài từ mã nguồn (mục 2–6).
 
 ## Cài nhanh bằng bộ cài
 
 1. Cài FFmpeg (một lần): `winget install --id Gyan.FFmpeg -e`, rồi đăng xuất/đăng nhập lại để PATH có hiệu lực.
-2. Tải file `LocalSub NPU_0.5.0_x64-setup.exe` ở trang
+2. Tải file `LocalSub NPU_0.6.0_x64-setup.exe` ở trang
    [Releases](https://github.com/luongminhphu/localsub-npu/releases) (hoặc artifact
    `localsub-npu-windows-installer` của workflow **Release** trong tab Actions).
 3. Chạy bộ cài. Bộ cài **chưa được ký số**, nên Windows SmartScreen có thể hiện "Windows protected your PC":
@@ -208,7 +208,7 @@ Tự đóng gói bộ cài (giống workflow Release trên GitHub):
 .\scripts\build-worker.ps1          # đóng băng worker bằng PyInstaller -> apps\inference\dist\localsub-worker\ + smoke test
 cd apps\desktop
 npx tauri build --bundles nsis --config src-tauri/tauri.bundle.conf.json
-# kết quả: apps\desktop\src-tauri\target\release\bundle\nsis\LocalSub NPU_0.5.0_x64-setup.exe
+# kết quả: apps\desktop\src-tauri\target\release\bundle\nsis\LocalSub NPU_0.6.0_x64-setup.exe
 ```
 
 `tauri.bundle.conf.json` chỉ dùng khi build bộ cài (thêm thư mục worker vào gói); `npm run tauri dev` không cần nó.
@@ -289,7 +289,7 @@ Mục **Lịch sử xử lý** đọc 10 job gần nhất từ `data\output\logs
 thời gian bắt đầu (giờ máy, cột ghi múi giờ, ví dụ GMT+7), tên file, ngôn ngữ, thiết bị nhận dạng / dịch
 (dấu `*` = đã chuyển thiết bị, rê chuột để xem lý do), thời lượng media, RTF và trạng thái (kèm mã lỗi).
 Dòng tổng hợp cho biết tỉ lệ thành công, tỉ lệ chạy trên NPU, RTF trung vị và số lần chuyển thiết bị.
-RTF = thời gian xử lý / thời lượng media; nhỏ hơn 1 là nhanh hơn thời gian thực. Dòng "Cập nhật lúc …" chuyển
+RTF tổng = tổng thời gian job (nạp model, nhận dạng, dịch) / thời lượng media; dòng nhỏ dưới giá trị tách thời gian nhận dạng (NĐ) và dịch. Nhỏ hơn 1 là nhanh hơn thời gian thực. Dòng "Cập nhật lúc …" chuyển
 sang màu vàng khi dữ liệu cũ hơn 2 phút. Lịch sử chỉ chứa metadata — không có nội dung phụ đề hay đường dẫn đầy đủ.
 Dòng lệnh tương đương: `python -m app.main history --limit 20`.
 
@@ -413,10 +413,40 @@ số câu dịch lỗi (`translation_fallback_lines`) và mã lỗi — **không
 
 ### Thiết bị
 
-- `auto`: thử **NPU → GPU → CPU**, dùng thiết bị đầu tiên chạy được và ghi lý do chuyển.
+- `auto` cho **nhận dạng**: thử **NPU → GPU → CPU**, dùng thiết bị đầu tiên chạy được và ghi lý do chuyển.
+- `auto` cho **dịch** (từ 0.6.0): thử **GPU → NPU → CPU**. LLM trên NPU dùng shape tĩnh và chỉ xử lý một chuỗi mỗi lần, nên dịch nhiều dòng song song trên GPU thường nhanh hơn nhiều.
 - `NPU` / `GPU` / `CPU`: bắt buộc thiết bị đó; nếu không có sẽ báo lỗi `DEVICE_UNAVAILABLE`, không tự đổi.
 - Whisper được giải phóng khỏi bộ nhớ trước khi nạp model dịch, nên có thể chạy cả hai trên NPU.
-- Gợi ý bắt đầu: Whisper trên `NPU`, dịch trên `auto`. So sánh bằng `benchmark-devices.ps1` rồi cố định thiết bị nhanh nhất.
+- Gợi ý bắt đầu: Whisper trên `NPU`, dịch trên `auto` (tức GPU). So sánh bằng `benchmark-devices.ps1` rồi cố định thiết bị nhanh nhất.
+
+### Tối ưu tốc độ (0.6.0)
+
+Với video dài, thời gian thường bị chiếm bởi **bước dịch** chứ không phải nhận dạng. Xem cột **RTF tổng** trong *Lịch sử xử lý*: dòng nhỏ bên dưới ghi `NĐ <thời gian nhận dạng> · Dịch <thời gian dịch>` để biết bước nào chậm.
+
+Những thay đổi trong 0.6.0:
+
+| Thay đổi | Tác dụng |
+|---|---|
+| Dịch nhiều nhóm dòng trong **một lần gọi** model (mặc định 4 nhóm × 8 dòng trên GPU/CPU) | Tận dụng continuous batching của OpenVINO GenAI; đo trên CPU sandbox: bước dịch nhanh gấp ~2 lần |
+| Dòng dịch lỗi được **dịch lại cùng lúc** thay vì từng dòng một | Giảm số lần gọi model, nhất là trên NPU |
+| NPU dùng `GENERATE_HINT=BEST_PERF` | Sinh token nhanh hơn, đổi lại biên dịch model lâu hơn ở lần đầu |
+| `auto` cho dịch ưu tiên **GPU** | Tránh chi phí prefill theo shape tĩnh của NPU |
+| Whisper xử lý theo **đoạn ~5 phút**, cắt tại chỗ im lặng nhất, bỏ qua đoạn im lặng | Có tiến độ `%` và thời gian còn lại ở bước Nhận dạng; bộ nhớ ổn định với video nhiều giờ |
+
+Tinh chỉnh bằng biến môi trường `LOCALSUB_TRANSLATION_PARALLEL` (1–16, mặc định 4 trên GPU/CPU, 1 trên NPU). Tăng lên 8 nếu GPU còn dư tải trong chart; giảm nếu thiếu VRAM hoặc gặp lỗi bộ nhớ.
+
+### Chart tải CPU / GPU / NPU
+
+Khung **Tải hệ thống** trong app hiện tải CPU, GPU, NPU và RAM mỗi giây, lưu 5 phút gần nhất:
+
+- Số liệu lấy từ Windows Performance Counters (`Processor Information`, `GPU Engine`) — cùng nguồn với Task Manager. NPU Intel AI Boost được nhận ra qua DXCore.
+- Mỗi thẻ ghi trạng thái `đang đo` / `không phát hiện` / `đang chờ`, giá trị hiện tại, trung bình và đỉnh 5 phút.
+- Dòng trạng thái ghi thời điểm mẫu mới nhất kèm múi giờ; nếu quá 5 giây không có mẫu mới sẽ báo *mất tín hiệu*.
+- Vạch dọc tím đánh dấu thời điểm job chuyển bước (Nhận dạng, Dịch…), giúp thấy bước nào đang dùng thiết bị nào.
+- Bộ đo chỉ chạy khi app đang mở khung này và tự dừng sau 60 giây không được đọc. Nút **Tạm dừng** giữ nguyên chart để xem lại.
+- Trên máy không phải Windows (hoặc bản xem trước trên trình duyệt), chart hiện số liệu mô phỏng hoặc thông báo không hỗ trợ.
+
+Cách đọc: nếu ở bước Dịch mà GPU thấp và CPU cao, model dịch đang chạy trên CPU — kiểm tra lại thiết bị dịch và driver GPU.
 
 ---
 
@@ -431,6 +461,7 @@ số câu dịch lỗi (`translation_fallback_lines`) và mã lỗi — **không
 | `LOCALSUB_MODEL_DIR` | `<repo>\data\models` | Thư mục model |
 | `LOCALSUB_OUTPUT_DIR` | `<repo>\data\output` | Thư mục kết quả |
 | `LOCALSUB_LOG_LEVEL` | `INFO` | `DEBUG`, `INFO`, `WARNING`, `ERROR` |
+| `LOCALSUB_TRANSLATION_PARALLEL` | `4` (NPU: `1`) | Số nhóm dòng dịch gửi cùng lúc cho model (1–16) |
 | `LOCALSUB_WORKER_DIR` | tự dò | App desktop: thư mục chứa `app\main.py` |
 | `LOCALSUB_WORKER_PYTHON` | `<worker>\.venv\Scripts\python.exe` | App desktop: Python dùng để chạy worker |
 
@@ -527,7 +558,8 @@ CI (GitHub Actions) chạy Python lint/test, frontend lint/type-check/test/build
 4. Wave 4: ✅
    - 4A: quản lý model trong app (tải/tiếp tục/xóa, kiểm tra toàn vẹn), lịch sử xử lý, giao diện tiếng Việt.
    - 4B: bộ cài Windows NSIS kèm worker đóng gói sẵn (PyInstaller), workflow Release trên GitHub.
-5. Tiếp theo (backlog): benchmark thiết bị ngay trong app, ký số bộ cài, kèm FFmpeg trong bộ cài, tự cập nhật.
+5. Wave 5A: dịch song song, dịch lại theo nhóm, nhận dạng theo đoạn có tiến độ, `auto` dịch ưu tiên GPU, chart tải CPU/GPU/NPU, lịch sử tách thời gian nhận dạng/dịch. ✅
+6. Tiếp theo (backlog): chạy song song nhận dạng (NPU) và dịch (GPU) theo pipeline, preset tốc độ/chất lượng, benchmark thiết bị ngay trong app, ký số bộ cài, kèm FFmpeg trong bộ cài, tự cập nhật.
 
 ## Giấy phép
 

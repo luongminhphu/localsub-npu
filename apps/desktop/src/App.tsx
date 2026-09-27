@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { HistoryPanel } from "./components/HistoryPanel";
 import { ModelManager } from "./components/ModelManager";
-import { formatLocal, offsetLabel } from "./lib/format";
+import { MonitorPanel, type StageMarker } from "./components/MonitorPanel";
+import { estimateRemainingMs, formatDuration, formatLocal, offsetLabel } from "./lib/format";
 import {
   errorMessage,
   I18nContext,
@@ -173,6 +174,24 @@ export function App() {
   const issues = useMemo(() => (project ? validateCues(project.cues) : []), [project]);
   const blocking = issues.filter((i) => i.severity === "error");
   const running = job.status === "running";
+  // Stage changes of the current job, drawn as markers on the load chart.
+  const [markers, setMarkers] = useState<StageMarker[]>([]);
+  useEffect(() => {
+    if (!job.stage || !STEPS.includes(job.stage as WorkerStage)) return;
+    setMarkers((cur) => (cur.length && cur[cur.length - 1].stage === job.stage ? cur : [...cur, { at: Date.now(), stage: job.stage as string }]));
+  }, [job.stage]);
+  // When the current progress stage started, for a linear ETA.
+  const progressStart = useRef<{ stage: string | null; at: number } | null>(null);
+  if (job.progress && progressStart.current?.stage !== job.progress.stage) {
+    progressStart.current = { stage: job.progress.stage, at: Date.now() };
+  }
+  const progressText = (stage: string): string => {
+    const p = job.progress;
+    if (!p || job.stage !== stage || p.stage !== stage || !p.total) return "";
+    const shown = stage === "transcribing" ? `${Math.min(100, Math.round((p.done / p.total) * 100))}%` : `${p.done}/${p.total}`;
+    const eta = estimateRemainingMs(p.done, p.total, Date.now() - (progressStart.current?.at ?? Date.now()));
+    return ` ${shown}${eta === null ? "" : ` · ${t("job.eta", { eta: formatDuration(eta) })}`}`;
+  };
   const hasTranslation = Boolean(project?.cues.some((c) => c.translation !== null));
   const missingModels = [model, ...(translateTo ? [translationModel] : [])].filter(
     (m) => diagnostics && !installed.has(m),
@@ -192,6 +211,7 @@ export function App() {
       formats,
     };
     dispatch({ type: "start" });
+    setMarkers([]);
     setNotice(null);
     try {
       stopListening.current = await bridge.startJob(config, {
@@ -384,7 +404,7 @@ export function App() {
               : idx < activeIndex ? "done"
               : idx === activeIndex ? (job.status === "failed" ? "failed" : "active")
               : "";
-            return <li key={s} className={state}>{t(`steps.${s}` as MessageKey)}{s === "translating" && job.progress && job.stage === "translating" ? ` ${job.progress.done}/${job.progress.total}` : ""}</li>;
+            return <li key={s} className={state}>{t(`steps.${s}` as MessageKey)}{progressText(s)}</li>;
           })}
         </ol>
         <div className="actions">
@@ -469,6 +489,7 @@ export function App() {
         jobRunning={running}
         onChanged={() => void runDiagnostics()}
       />
+      <MonitorPanel bridge={bridge} markers={markers} />
       <HistoryPanel bridge={bridge} refreshKey={historyKey} />
     </main>
     </I18nContext.Provider>

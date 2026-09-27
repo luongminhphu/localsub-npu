@@ -140,3 +140,33 @@ textarea { min-width: 220px; resize: vertical; line-height: 1.4; }
   .header-side { align-items: flex-start; }
 }
 @media (max-width: 600px) { .lang-toggle button, .model-actions button, .panel-title .link { width: auto; } .model-row { grid-template-columns: minmax(0, 1fr) auto; } .model-size { text-align: left; } }
+
+/* System load monitor */
+.monitor-status { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.monitor-status .dot { width: 8px; height: 8px; border-radius: 50%; background: #64748b; display: inline-block; }
+.monitor-status .dot.live { background: #34d399; box-shadow: 0 0 0 3px rgba(52, 211, 153, 0.18); }
+.monitor-status .dot.stale { background: #f59e0b; }
+.monitor-status.stale { color: #fbbf24; }
+.monitor-legend { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin: 12px 0; }
+.metric-card { border: 1px solid #283552; border-radius: 12px; padding: 10px 12px; background: #0f172a; min-width: 0; }
+.metric-card.unsupported { opacity: 0.6; }
+.metric-head { display: flex; align-items: center; gap: 6px; font-size: 0.86rem; }
+.metric-state { margin-left: auto; font-size: 0.74rem; color: #94a3b8; }
+.swatch { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
+.metric-value { font-size: 1.5rem; font-weight: 700; font-variant-numeric: tabular-nums; margin-top: 4px; }
+.metric-sub, .metric-name { font-size: 0.76rem; color: #94a3b8; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.chart-wrap { display: grid; grid-template-columns: 40px 1fr; gap: 6px; }
+.chart-y { display: flex; flex-direction: column; justify-content: space-between; font-size: 0.72rem; color: #94a3b8; text-align: right; height: 180px; }
+.chart-area { position: relative; height: 180px; border: 1px solid #283552; border-radius: 10px; background: #0b1222; overflow: hidden; }
+.chart-area svg { width: 100%; height: 100%; display: block; }
+.chart-area .grid { stroke: #1e293b; stroke-width: 1; vector-effect: non-scaling-stroke; }
+.chart-area .marker { stroke: #a78bfa; stroke-width: 1; stroke-dasharray: 4 4; vector-effect: non-scaling-stroke; }
+.chart-area .series { fill: none; stroke-width: 2; vector-effect: non-scaling-stroke; stroke-linejoin: round; }
+.marker-label { position: absolute; top: 4px; transform: translateX(4px); font-size: 0.7rem; color: #c4b5fd; background: rgba(11, 18, 34, 0.85); padding: 1px 4px; border-radius: 4px; white-space: nowrap; pointer-events: none; }
+.chart-empty { position: absolute; inset: 0; display: grid; place-items: center; color: #94a3b8; font-size: 0.86rem; }
+.chart-x { display: flex; justify-content: space-between; margin-left: 46px; font-size: 0.72rem; color: #94a3b8; margin-top: 4px; }
+.sub-num { display: block; font-size: 0.72rem; color: #94a3b8; }
+@media (max-width: 720px) { .monitor-legend { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.marker-label.right { transform: translateX(calc(-100% - 4px)); }
+.monitor-status { flex-wrap: nowrap; align-items: baseline; }
+.monitor-status .dot { flex: none; }
