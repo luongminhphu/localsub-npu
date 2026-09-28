@@ -8,10 +8,12 @@ from __future__ import annotations
 
 import os
 import re
+import threading
 import time
 import unicodedata
+from collections import deque
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -64,6 +66,8 @@ class TranslationResult:
     lines: tuple[str, ...]
     fallback_lines: int
     inference_ms: int
+    # Lines translated per device ("GPU": 900, "NPU": 300); used for the hybrid audit record.
+    device_lines: dict[str, int] = field(default_factory=dict)
 
 
 REQUIRED_FILES: tuple[str, ...] = (
@@ -258,6 +262,59 @@ def plausible(value: str | None, source: str) -> str | None:
     return text
 
 
+class _Engine:
+    """Translates units of batches on one pipeline: one generate() call per unit, then the
+    rejected lines of the unit are retried together as single-line prompts."""
+
+    def __init__(self, translator: LoadedTranslator, source: str, target: str, parallel: int):
+        self.translator = translator
+        self.source = source
+        self.target = target
+        self.parallel = max(1, min(parallel, MAX_PARALLEL))
+
+    def _run(self, jobs: Sequence[tuple[Sequence[str], Sequence[str]]]) -> list[list[str | None]]:
+        """Translate (batch, context) pairs; context comes from source lines, so batches
+        are independent and can share one generate() call."""
+        pipeline = self.translator.pipeline
+        prompts = [
+            _prompt(pipeline, build_messages(b, self.source, self.target, c)) for b, c in jobs
+        ]
+        tokens = 64 + 48 * max(len(b) for b, _ in jobs)
+        try:
+            raws = _generate_many(pipeline, prompts, tokens)
+        except Exception as exc:
+            raise LocalSubError(
+                ErrorCode.TRANSLATION_FAILED, f"LLM generation failed: {str(exc)[:200]}"
+            ) from exc
+        return [
+            [plausible(v, src) for v, src in zip(parse_numbered(raw, len(b)), b, strict=True)]
+            for raw, (b, _) in zip(raws, jobs, strict=True)
+        ]
+
+    def unit(self, group: Sequence[tuple[list[str], list[str]]]) -> tuple[list[list[str]], int]:
+        parsed = self._run(group)
+        fallbacks = 0
+        # Keep the source text for lines the model still fails so the editor can fix them.
+        misses = [
+            (b, i) for b, values in enumerate(parsed) for i, v in enumerate(values) if v is None
+        ]
+        for start_idx in range(0, len(misses), self.parallel):
+            chunk = misses[start_idx : start_idx + self.parallel]
+            retried = self._run([([group[b][0][i]], group[b][1]) for b, i in chunk])
+            for (b, i), values in zip(chunk, retried, strict=True):
+                if values[0] is None:
+                    fallbacks += 1
+                parsed[b][i] = values[0] or group[b][0][i]
+        return [[v or "" for v in values] for values in parsed], fallbacks
+
+
+def _batches(lines: Sequence[str], batch_size: int) -> list[tuple[int, list[str], list[str]]]:
+    return [
+        (o, list(lines[o : o + batch_size]), list(lines[max(0, o - CONTEXT_LINES) : o]))
+        for o in range(0, len(lines), batch_size)
+    ]
+
+
 def translate_lines(
     translator: LoadedTranslator,
     lines: Sequence[str],
@@ -272,50 +329,192 @@ def translate_lines(
     started = time.perf_counter()
     if parallel is None:
         parallel = default_parallelism(translator.device.resolved)
-    parallel = max(1, min(parallel, MAX_PARALLEL))
+    engine = _Engine(translator, source, target, parallel)
     output: list[str] = []
     fallbacks = 0
     total = len(lines)
-
-    def run(jobs: Sequence[tuple[Sequence[str], Sequence[str]]]) -> list[list[str | None]]:
-        """Translate (batch, context) pairs; context comes from source lines, so batches
-        are independent and can share one generate() call."""
-        pipeline = translator.pipeline
-        prompts = [_prompt(pipeline, build_messages(b, source, target, c)) for b, c in jobs]
-        tokens = 64 + 48 * max(len(b) for b, _ in jobs)
-        try:
-            raws = _generate_many(pipeline, prompts, tokens)
-        except Exception as exc:
-            raise LocalSubError(
-                ErrorCode.TRANSLATION_FAILED, f"LLM generation failed: {str(exc)[:200]}"
-            ) from exc
-        return [
-            [plausible(v, src) for v, src in zip(parse_numbered(raw, len(b)), b, strict=True)]
-            for raw, (b, _) in zip(raws, jobs, strict=True)
-        ]
-
-    offsets = list(range(0, total, batch_size))
-    for g in range(0, len(offsets), parallel):
-        group = [
-            (list(lines[o : o + batch_size]), list(lines[max(0, o - CONTEXT_LINES) : o]))
-            for o in offsets[g : g + parallel]
-        ]
-        parsed = run(group)
-        # Retry every rejected line of the group together (single-line prompts), then keep
-        # the source text for lines the model still fails so the editor can fix them.
-        misses = [
-            (b, i) for b, values in enumerate(parsed) for i, v in enumerate(values) if v is None
-        ]
-        for start_idx in range(0, len(misses), parallel):
-            chunk = misses[start_idx : start_idx + parallel]
-            retried = run([([group[b][0][i]], group[b][1]) for b, i in chunk])
-            for (b, i), values in zip(chunk, retried, strict=True):
-                if values[0] is None:
-                    fallbacks += 1
-                parsed[b][i] = values[0] or group[b][0][i]
-        for values in parsed:
-            output.extend(v or "" for v in values)
+    batches = _batches(lines, batch_size)
+    for g in range(0, len(batches), engine.parallel):
+        values, missed = engine.unit([(b, c) for _, b, c in batches[g : g + engine.parallel]])
+        fallbacks += missed
+        for v in values:
+            output.extend(v)
         if on_progress:
             on_progress(len(output), total)
+    device = translator.device.resolved or "?"
+    return TranslationResult(
+        tuple(output),
+        fallbacks,
+        int((time.perf_counter() - started) * 1000),
+        {device: total},
+    )
 
-    return TranslationResult(tuple(output), fallbacks, int((time.perf_counter() - started) * 1000))
+
+# --- Hybrid GPU + NPU -------------------------------------------------------------------
+
+HYBRID = "HYBRID"
+HYBRID_DEVICES = ("GPU", "NPU")
+
+Loader = Callable[[], LoadedTranslator]
+LaneSink = Callable[[str, str, str | None], None]  # (device, "ready"|"failed", reason)
+
+
+@dataclass(frozen=True)
+class Lane:
+    device: str
+    loader: Loader
+
+
+def translate_lines_hybrid(
+    lanes: Sequence[Lane],
+    lines: Sequence[str],
+    source: str,
+    target: str,
+    batch_size: int = DEFAULT_BATCH_SIZE,
+    on_progress: ProgressSink | None = None,
+    on_lane: LaneSink | None = None,
+) -> tuple[TranslationResult, dict[str, LoadedTranslator | str]]:
+    """Translate on several devices at once with a shared work queue.
+
+    Each lane loads its own pipeline in a thread and then keeps pulling the next batches
+    (GPU: several per generate() call, NPU: one), so the faster device naturally does more
+    work and a slow NPU compile does not delay the GPU. OpenVINO releases the GIL while
+    generating. A lane that fails to load or generate returns its batches to the queue; the
+    job fails only when every lane has failed and work is left.
+    """
+    if source == target:
+        return TranslationResult(tuple(lines), 0, 0), {}
+    started = time.perf_counter()
+    total = len(lines)
+    queue: deque[tuple[int, list[str], list[str]]] = deque(_batches(lines, batch_size))
+    results: dict[int, list[str]] = {}
+    lock = threading.Lock()
+    state: dict[str, int] = {"done": 0, "fallbacks": 0}
+    per_device: dict[str, int] = {}
+    outcome: dict[str, LoadedTranslator | str] = {}
+    errors: list[Exception] = []
+
+    def work(lane: Lane) -> None:
+        try:
+            translator = lane.loader()
+        except Exception as exc:  # noqa: BLE001 - a lane failing must not kill the job
+            with lock:
+                outcome[lane.device] = f"{lane.device}: {exc}"[:240]
+            if on_lane:
+                on_lane(lane.device, "failed", str(outcome[lane.device]))
+            return
+        with lock:
+            outcome[lane.device] = translator
+        if on_lane:
+            on_lane(lane.device, "ready", None)
+        engine = _Engine(translator, source, target, default_parallelism(lane.device))
+        while True:
+            with lock:
+                if not queue:
+                    return
+                taken = [queue.popleft() for _ in range(min(engine.parallel, len(queue)))]
+            try:
+                values, missed = engine.unit([(b, c) for _, b, c in taken])
+            except Exception as exc:  # noqa: BLE001
+                with lock:
+                    queue.extendleft(reversed(taken))  # another lane picks them up
+                    errors.append(exc)
+                    outcome[lane.device] = f"{lane.device}: {exc}"[:240]
+                if on_lane:
+                    on_lane(lane.device, "failed", str(outcome[lane.device]))
+                return
+            with lock:
+                for (offset, _, _), v in zip(taken, values, strict=True):
+                    results[offset] = v
+                done_lines = sum(len(v) for v in values)
+                state["done"] += done_lines
+                state["fallbacks"] += missed
+                per_device[lane.device] = per_device.get(lane.device, 0) + done_lines
+                if on_progress:
+                    on_progress(state["done"], total)
+
+    threads = [
+        threading.Thread(target=work, args=(lane,), name=f"translate-{lane.device}", daemon=True)
+        for lane in lanes
+    ]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    if sum(len(v) for v in results.values()) < total:
+        if errors and isinstance(errors[-1], LocalSubError):
+            raise errors[-1]
+        reasons = "; ".join(str(v) for v in outcome.values() if isinstance(v, str))
+        raise LocalSubError(
+            ErrorCode.TRANSLATION_FAILED, f"No translation device could run: {reasons}"[:300]
+        )
+    output: list[str] = []
+    for offset in sorted(results):
+        output.extend(results[offset])
+    return (
+        TranslationResult(
+            tuple(output),
+            state["fallbacks"],
+            int((time.perf_counter() - started) * 1000),
+            per_device,
+        ),
+        outcome,
+    )
+
+
+def model_size_bytes(path: Path) -> int:
+    try:
+        return sum(f.stat().st_size for f in path.rglob("*") if f.is_file())
+    except OSError:
+        return 0
+
+
+def available_memory_bytes() -> int | None:
+    """Free physical memory (GPU and NPU share system RAM on Intel Core Ultra)."""
+    try:
+        if os.name == "nt":
+            import ctypes
+
+            class _Status(ctypes.Structure):
+                _fields_ = [
+                    ("dwLength", ctypes.c_ulong),
+                    ("dwMemoryLoad", ctypes.c_ulong),
+                    ("ullTotalPhys", ctypes.c_ulonglong),
+                    ("ullAvailPhys", ctypes.c_ulonglong),
+                    ("ullTotalPageFile", ctypes.c_ulonglong),
+                    ("ullAvailPageFile", ctypes.c_ulonglong),
+                    ("ullTotalVirtual", ctypes.c_ulonglong),
+                    ("ullAvailVirtual", ctypes.c_ulonglong),
+                    ("ullAvailExtendedVirtual", ctypes.c_ulonglong),
+                ]
+
+            status = _Status()
+            status.dwLength = ctypes.sizeof(_Status)
+            if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):  # type: ignore[attr-defined]
+                return int(status.ullAvailPhys)
+            return None
+        return int(os.sysconf("SC_AVPHYS_PAGES") * os.sysconf("SC_PAGE_SIZE"))
+    except (OSError, ValueError, AttributeError):
+        return None
+
+
+def hybrid_plan(
+    available_devices: Sequence[str], model_bytes: int, free_bytes: int | None
+) -> tuple[list[str], str | None]:
+    """Devices to use for HYBRID and why a device was left out (None when both run).
+
+    A second copy of the model needs roughly its size again plus working memory, so the NPU
+    lane is dropped when free RAM is below 2.5x the model size.
+    """
+    present = {d.upper().split(".")[0] for d in available_devices}
+    devices = [d for d in HYBRID_DEVICES if d in present]
+    if len(devices) < 2:
+        missing = ", ".join(d for d in HYBRID_DEVICES if d not in present)
+        return devices or ["CPU"], f"hybrid: {missing} not available"
+    if free_bytes is not None and model_bytes and free_bytes < 2.5 * model_bytes:
+        return ["GPU"], (
+            f"hybrid: only {free_bytes / 2**30:.1f} GB RAM free, "
+            f"need ~{2.5 * model_bytes / 2**30:.1f} GB for two model copies"
+        )
+    return devices, None
