@@ -75,7 +75,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=translation.DEFAULT_TRANSLATION_MODEL,
         choices=sorted(translation.TRANSLATION_CATALOG),
     )
-    tr.add_argument("--translation-device", choices=DEVICES, help="Device for the translation LLM")
+    tr.add_argument(
+        "--translation-device",
+        choices=[*DEVICES, translation.HYBRID],
+        help="Device for the translation LLM (HYBRID = GPU and NPU together)",
+    )
     tr.add_argument("--formats", type=_formats, default=("srt",), help="e.g. srt,vtt,txt,json")
     tr.add_argument("--output", type=Path, help="Output .srt path for the source track")
     tr.add_argument("--events", action="store_true", help="Stream JSON Lines events to stdout")

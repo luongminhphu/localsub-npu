@@ -63,3 +63,9 @@ export function estimateRemainingMs(done: number, total: number, elapsedMs: numb
   if (!(total > 0) || !(done > 0) || done >= total || !(elapsedMs >= 3_000)) return null;
   return Math.round((elapsedMs * (total - done)) / done);
 }
+
+/** " · GPU 900 · NPU 300" for hybrid translation, empty otherwise. */
+export function splitText(lines: Record<string, number> | null | undefined): string {
+  const entries = Object.entries(lines ?? {}).filter(([, n]) => n > 0);
+  return entries.length > 1 ? entries.map(([d, n]) => ` · ${d} ${n}`).join("") : "";
+}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatBytes, formatDuration, formatLocal, estimateRemainingMs, isStale, offsetLabel, percent } from "./format";
+import { formatBytes, formatDuration, formatLocal, estimateRemainingMs, isStale, splitText, offsetLabel, percent } from "./format";
 
 describe("format", () => {
   it("formats byte sizes", () => {
@@ -51,5 +51,14 @@ describe("estimateRemainingMs", () => {
     expect(estimateRemainingMs(0, 100, 10_000)).toBeNull();
     expect(estimateRemainingMs(50, 100, 1_000)).toBeNull();
     expect(estimateRemainingMs(100, 100, 10_000)).toBeNull();
+  });
+});
+
+describe("splitText", () => {
+  it("shows the per-device split only for hybrid runs", () => {
+    expect(splitText({ GPU: 900, NPU: 300 })).toBe(" · GPU 900 · NPU 300");
+    expect(splitText({ GPU: 900 })).toBe("");
+    expect(splitText({ GPU: 900, NPU: 0 })).toBe("");
+    expect(splitText(null)).toBe("");
   });
 });

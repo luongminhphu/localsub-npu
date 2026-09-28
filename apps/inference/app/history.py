@@ -51,6 +51,7 @@ def summarize(record: dict[str, Any]) -> dict[str, Any]:
         "total_rtf": _ratio(timings.get("total"), record.get("source_duration_ms")),
         "asr_ms": timings.get("inference"),
         "translation_ms": timings.get("translation"),
+        "translation_device_lines": record.get("translation_device_lines"),
         "cue_count": record.get("cue_count"),
         "translation_fallback_lines": record.get("translation_fallback_lines"),
         "error_code": record.get("error_code"),

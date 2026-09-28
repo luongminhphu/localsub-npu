@@ -30,6 +30,7 @@ import {
 import { formatTime, parseTime } from "./lib/time";
 import type {
   DevicePreference,
+  TranslationDevice,
   Diagnostics,
   ExportFormat,
   JobConfig,
@@ -61,6 +62,12 @@ const DEVICES: Array<{ value: DevicePreference; label: string }> = [
   { value: "GPU", label: "GPU" },
   { value: "CPU", label: "CPU" },
 ];
+const TRANSLATION_DEVICES: Array<{ value: TranslationDevice; label: string }> = [
+  ...DEVICES,
+  { value: "HYBRID", label: "device.hybrid" },
+];
+type Tab = "editor" | "monitor" | "history" | "models";
+const TABS: Tab[] = ["editor", "monitor", "history", "models"];
 const JA_WEAK_MODELS = new Set(["whisper-tiny-int8", "whisper-base-int8", "whisper-small-int8"]);
 const FORMATS: ExportFormat[] = ["srt", "vtt", "txt", "json"];
 const STEPS: WorkerStage[] = [
@@ -116,7 +123,8 @@ export function App() {
   const [device, setDevice] = useState<DevicePreference>("auto");
   const [translateTo, setTranslateTo] = useState<TargetLanguage>("vi");
   const [translationModel, setTranslationModel] = useState("qwen3-8b-int4-cw");
-  const [translationDevice, setTranslationDevice] = useState<DevicePreference>("auto");
+  const [translationDevice, setTranslationDevice] = useState<TranslationDevice>("auto");
+  const [tab, setTab] = useState<Tab>("editor");
   const [formats, setFormats] = useState<ExportFormat[]>(["srt", "json"]);
   const [diagnostics, setDiagnostics] = useState<Diagnostics | null>(null);
   const [diagError, setDiagError] = useState<string | null>(null);
@@ -159,6 +167,7 @@ export function App() {
   useEffect(() => {
     if (job.status === "completed" && job.project) {
       setProject(job.project);
+      setTab("editor");
       setDirty(false);
     }
     if (job.status !== "running") {
@@ -212,6 +221,7 @@ export function App() {
     };
     dispatch({ type: "start" });
     setMarkers([]);
+    setTab("monitor"); // watch device load while the job runs
     setNotice(null);
     try {
       stopListening.current = await bridge.startJob(config, {
@@ -250,6 +260,7 @@ export function App() {
       const data = await bridge.loadProject(path);
       if (!isProject(data)) throw new Error(t("editor.notProject"));
       setProject(normalizeProject(data));
+      setTab("editor");
       setSource(data.source_media ?? source);
       setDirty(false);
       setNotice(t("editor.opened", { file: baseName(path) }));
@@ -273,10 +284,9 @@ export function App() {
     <I18nContext.Provider value={i18n}>
     <main className="app-shell">
       <header className="header">
-        <div>
-          <p className="eyebrow">{t("app.eyebrow")}</p>
+        <div className="brand">
           <h1>LocalSub NPU</h1>
-          <p className="subtitle">{t("app.subtitle")}</p>
+          <p className="subtitle" title={t("app.eyebrow")}>{t("app.subtitle")}</p>
         </div>
         <div className="header-side">
           <div className="lang-toggle" role="group" aria-label={t("app.language")}>
@@ -292,7 +302,8 @@ export function App() {
         </div>
       </header>
 
-      <section className="grid" aria-label={t("job.generate")}>
+      <div className="workspace">
+      <aside className="sidebar" aria-label={t("job.generate")}>
         <article className="panel">
           <h2>{t("media.title")}</h2>
           <button type="button" className="drop-zone" onClick={async () => setSource((await bridge?.pickMedia()) ?? source)} disabled={!bridge || running}>
@@ -350,11 +361,14 @@ export function App() {
                     <option key={m.id} value={m.id}>{m.label}{modelSuffix(m.id)}</option>
                   ))}
                 </select>
-                <select aria-label={t("config.translationDevice")} value={translationDevice} onChange={(e) => setTranslationDevice(e.target.value as DevicePreference)}>
-                  {DEVICES.map((d) => <option key={d.value} value={d.value}>{deviceLabel(t, d.label)}</option>)}
+                <select aria-label={t("config.translationDevice")} value={translationDevice} onChange={(e) => setTranslationDevice(e.target.value as TranslationDevice)}>
+                  {TRANSLATION_DEVICES.map((d) => <option key={d.value} value={d.value}>{deviceLabel(t, d.label)}</option>)}
                 </select>
               </div>
-              <p className="help-text">{t(`hint.${translationModel}` as MessageKey)}</p>
+              <p className="help-text">
+                {t(`hint.${translationModel}` as MessageKey)}
+                {translationDevice === "HYBRID" ? ` ${t("config.hybridHint")}` : ""}
+              </p>
             </div>
           )}
           <fieldset className="formats">
@@ -393,9 +407,11 @@ export function App() {
             <p className="help-text">{t("runtime.checkedAt", { time: formatLocal(diagAt.toISOString(), locale === "vi" ? "vi-VN" : "en-GB"), tz: offsetLabel(diagAt) })}</p>
           )}
         </article>
-      </section>
 
-      <section className="panel action-panel" aria-label={t("job.generate")}>
+      </aside>
+
+      <section className="main-pane panel">
+      <section className="action-panel" aria-label={t("job.progress")}>
         <ol className="stepper">
           {STEPS.filter((s) => s !== "translating" || translateTo).map((s) => {
             const idx = STEPS.indexOf(s);
@@ -428,9 +444,35 @@ export function App() {
           </details>
         )}
       </section>
-
+        <div className="tabs" role="tablist" aria-label={t("tabs.label")}>
+          {TABS.map((id) => (
+            <button
+              key={id}
+              type="button"
+              role="tab"
+              id={`tab-${id}`}
+              aria-controls={`panel-${id}`}
+              aria-selected={tab === id}
+              tabIndex={tab === id ? 0 : -1}
+              className={tab === id ? "on" : ""}
+              onClick={() => setTab(id)}
+              onKeyDown={(e) => {
+                if (e.key !== "ArrowRight" && e.key !== "ArrowLeft") return;
+                const next = TABS[(TABS.indexOf(id) + (e.key === "ArrowRight" ? 1 : TABS.length - 1)) % TABS.length];
+                setTab(next);
+                document.getElementById(`tab-${next}`)?.focus();
+              }}
+            >
+              {t(`tabs.${id}` as MessageKey)}
+              {id === "editor" && project ? <span className="count">{project.cues.length}</span> : null}
+              {id === "editor" && dirty ? <span className="dot-unsaved" aria-label={t("editor.unsaved")} /> : null}
+            </button>
+          ))}
+        </div>
+        <div className="tab-body" role="tabpanel" id="panel-editor" aria-labelledby="tab-editor" hidden={tab !== "editor"}>
+      {!project && <p className="empty-state">{t("editor.empty")}</p>}
       {project && (
-        <section className="panel editor" aria-label={t("editor.title")}>
+        <div className="editor" aria-label={t("editor.title")}>
           <div className="panel-title">
             <div>
               <h2>{t("editor.title")} {dirty && <span className="badge">{t("editor.unsaved")}</span>}</h2>
@@ -480,17 +522,25 @@ export function App() {
               </tbody>
             </table>
           </div>
-        </section>
+        </div>
       )}
-
+        </div>
+        <div className="tab-body" role="tabpanel" id="panel-monitor" aria-labelledby="tab-monitor" hidden={tab !== "monitor"}>
+          <MonitorPanel bridge={bridge} markers={markers} />
+        </div>
+        <div className="tab-body" role="tabpanel" id="panel-history" aria-labelledby="tab-history" hidden={tab !== "history"}>
+          <HistoryPanel bridge={bridge} refreshKey={historyKey} />
+        </div>
+        <div className="tab-body" role="tabpanel" id="panel-models" aria-labelledby="tab-models" hidden={tab !== "models"}>
       <ModelManager
         bridge={bridge}
         selected={[model, ...(translateTo ? [translationModel] : [])]}
         jobRunning={running}
         onChanged={() => void runDiagnostics()}
       />
-      <MonitorPanel bridge={bridge} markers={markers} />
-      <HistoryPanel bridge={bridge} refreshKey={historyKey} />
+        </div>
+      </section>
+      </div>
     </main>
     </I18nContext.Provider>
   );

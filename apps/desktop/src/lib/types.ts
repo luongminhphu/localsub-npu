@@ -1,4 +1,6 @@
 export type DevicePreference = "auto" | "NPU" | "GPU" | "CPU";
+/** HYBRID = GPU and NPU translate at the same time from one queue. */
+export type TranslationDevice = DevicePreference | "HYBRID";
 export type SpokenLanguage = "auto" | "en" | "ja" | "vi";
 export type TargetLanguage = "" | "en" | "vi";
 export type ExportFormat = "srt" | "vtt" | "txt" | "json";
@@ -37,7 +39,7 @@ export interface JobConfig {
   device: DevicePreference;
   translateTo: TargetLanguage;
   translationModel: string;
-  translationDevice: DevicePreference;
+  translationDevice: TranslationDevice;
   formats: ExportFormat[];
 }
 
@@ -152,6 +154,7 @@ export interface HistoryJob {
   total_rtf?: number | null;
   asr_ms?: number | null;
   translation_ms?: number | null;
+  translation_device_lines?: Record<string, number> | null;
 }
 
 export interface JobHistory {

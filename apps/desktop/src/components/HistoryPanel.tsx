@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
-import { formatDuration, formatLocal, isStale, offsetLabel } from "../lib/format";
+import { formatDuration, formatLocal, isStale, offsetLabel, splitText } from "../lib/format";
 import { useI18n, type MessageKey } from "../lib/i18n";
 import type { JobHistory } from "../lib/types";
 import type { WorkerBridge } from "../lib/worker";
 
 const LIMIT = 10;
+
 
 export function HistoryPanel(props: { bridge: WorkerBridge | null; refreshKey: number }) {
   const { bridge, refreshKey } = props;
@@ -110,7 +111,7 @@ export function HistoryPanel(props: { bridge: WorkerBridge | null; refreshKey: n
                           asr: formatDuration(j.asr_ms),
                           translation: j.translate_to ? formatDuration(j.translation_ms) : "—",
                           total: formatDuration(j.total_ms),
-                        })}
+                        }) + splitText(j.translation_device_lines)}
                       >
                         {j.total_rtf ?? j.real_time_factor ?? "—"}
                         {j.total_ms ? (
