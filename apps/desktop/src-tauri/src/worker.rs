@@ -21,8 +21,6 @@ const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 pub const LANGUAGES: &[&str] = &["auto", "en", "ja", "vi"];
 pub const TARGETS: &[&str] = &["en", "vi"];
 pub const DEVICES: &[&str] = &["auto", "NPU", "GPU", "CPU"];
-/// Translation also accepts HYBRID: GPU and NPU translate together from one queue.
-pub const TRANSLATION_DEVICES: &[&str] = &["auto", "NPU", "GPU", "CPU", "HYBRID"];
 pub const TASKS: &[&str] = &["transcribe", "translate"];
 pub const FORMATS: &[&str] = &["srt", "vtt", "txt", "json"];
 
@@ -286,7 +284,7 @@ pub fn transcribe_args(job: &JobArgs) -> Result<Vec<String>, String> {
             args.extend(["--translation-model".into(), m.to_string()]);
         }
         if let Some(d) = job.translation_device.as_deref().filter(|d| !d.is_empty()) {
-            allowed("translation_device", d, TRANSLATION_DEVICES)?;
+            allowed("translation_device", d, DEVICES)?;
             args.extend(["--translation-device".into(), d.to_string()]);
         }
     }
@@ -412,18 +410,13 @@ mod tests {
     }
 
     #[test]
-    fn hybrid_is_a_translation_device_only() {
+    fn hybrid_translation_device_is_rejected() {
+        // GPU+NPU hybrid translation was removed in 0.8.0 (slower than GPU alone).
         let file = std::env::temp_dir().join("localsub-arg-hybrid.mp4");
         std::fs::write(&file, b"x").unwrap();
         let mut hybrid = job(file.to_str().unwrap());
         hybrid.translation_device = Some("HYBRID".into());
-        let args = transcribe_args(&hybrid).unwrap();
-        assert!(args
-            .windows(2)
-            .any(|w| w == ["--translation-device", "HYBRID"]));
-        let mut asr = job(file.to_str().unwrap());
-        asr.device = "HYBRID".into(); // Whisper runs on one device
-        assert!(transcribe_args(&asr).is_err());
+        assert!(transcribe_args(&hybrid).is_err());
     }
 
     /// Spawns the real worker. Run with LOCALSUB_WORKER_DIR/LOCALSUB_WORKER_PYTHON set:

@@ -186,7 +186,7 @@ function previewHistory(): JobHistory {
   const jobs: JobHistory["jobs"] = [
     { job_id: "a1", started_at: iso(12), finished_at: iso(10), state: "completed", source_name: "market-briefing.mp4", language: "auto", detected_language: "en", translate_to: "vi", model_id: "whisper-small-int8", translation_model: "qwen3-8b-int4-cw", device: npu, translation_device: npu, source_duration_ms: 612_000, total_ms: 98_400, real_time_factor: 0.07, total_rtf: 0.161, asr_ms: 42_800, translation_ms: 51_300, cue_count: 142, translation_fallback_lines: 0, error_code: null },
     { job_id: "a2", started_at: iso(95), finished_at: iso(94), state: "failed", source_name: "interview-ja.mkv", language: "ja", detected_language: null, translate_to: "en", model_id: "whisper-large-v3-turbo-int8", translation_model: "qwen3-8b-int4-cw", device: null, translation_device: null, source_duration_ms: null, total_ms: 1_200, real_time_factor: null, total_rtf: null, asr_ms: null, translation_ms: null, cue_count: null, translation_fallback_lines: null, error_code: "MODEL_INCOMPLETE" },
-    { job_id: "a3", started_at: iso(1440), finished_at: iso(1436), state: "completed", source_name: "town-hall.mp4", language: "auto", detected_language: "vi", translate_to: "en", model_id: "whisper-small-int8", translation_model: "qwen3-4b-int4", device: { requested: "auto", resolved: "GPU", fallback_reason: "NPU compile failed" }, translation_device: { requested: "HYBRID", resolved: "GPU+NPU", fallback_reason: null }, source_duration_ms: 1_800_000, total_ms: 240_000, real_time_factor: 0.05, total_rtf: 0.133, asr_ms: 90_000, translation_ms: 141_000, translation_device_lines: { GPU: 290, NPU: 120 }, cue_count: 410, translation_fallback_lines: 2, error_code: null },
+    { job_id: "a3", started_at: iso(1440), finished_at: iso(1436), state: "completed", source_name: "town-hall.mp4", language: "auto", detected_language: "vi", translate_to: "en", model_id: "whisper-small-int8", translation_model: "qwen3-4b-int4", device: { requested: "auto", resolved: "GPU", fallback_reason: "NPU compile failed" }, translation_device: { requested: "auto", resolved: "GPU", fallback_reason: null }, source_duration_ms: 1_800_000, total_ms: 240_000, real_time_factor: 0.05, total_rtf: 0.133, asr_ms: 90_000, translation_ms: 141_000, translation_parallel: 8, cue_count: 410, translation_fallback_lines: 2, error_code: null },
   ];
   return {
     log_path: "data/output/logs/jobs.jsonl",
@@ -246,7 +246,7 @@ function previewBridge(): WorkerBridge {
             stage: "translating",
             done: 0,
             total: 4,
-            device: config.translationDevice === "HYBRID" ? "GPU+NPU" : config.translationDevice === "auto" ? "GPU" : config.translationDevice,
+            device: config.translationDevice === "auto" ? "GPU" : config.translationDevice,
             fallback_reason: null,
           },
           { type: "progress", stage: "translating", done: 4, total: 4 },

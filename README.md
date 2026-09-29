@@ -8,13 +8,13 @@
 - Sửa phụ đề trực tiếp trong bảng, xuất **SRT, VTT, TXT** và file dự án `.localsub.json`.
 - Media không bao giờ rời khỏi máy. Sau khi tải model lần đầu, không cần Internet và không cần API key.
 
-> Phiên bản hiện tại: **0.7.0 (Wave 5B: dịch song song GPU+NPU, giao diện gọn một màn hình)**. Có **bộ cài Windows** (không cần Python/Node/Rust) — xem
+> Phiên bản hiện tại: **0.8.0 (Wave 6A: GPU tự điều chỉnh số lô dịch mỗi lần, bỏ chế độ GPU+NPU)**. Có **bộ cài Windows** (không cần Python/Node/Rust) — xem
 > [Cài nhanh bằng bộ cài](#cài-nhanh-bằng-bộ-cài). Muốn phát triển hoặc chạy dòng lệnh thì cài từ mã nguồn (mục 2–6).
 
 ## Cài nhanh bằng bộ cài
 
 1. Cài FFmpeg (một lần): `winget install --id Gyan.FFmpeg -e`, rồi đăng xuất/đăng nhập lại để PATH có hiệu lực.
-2. Tải file `LocalSub.NPU_0.7.0_x64-setup.exe` ở trang
+2. Tải file `LocalSub.NPU_0.8.0_x64-setup.exe` ở trang
    [Releases](https://github.com/luongminhphu/localsub-npu/releases) (hoặc artifact
    `localsub-npu-windows-installer` của workflow **Release** trong tab Actions).
 3. Chạy bộ cài. Bộ cài **chưa được ký số**, nên Windows SmartScreen có thể hiện "Windows protected your PC":
@@ -208,7 +208,7 @@ Tự đóng gói bộ cài (giống workflow Release trên GitHub):
 .\scripts\build-worker.ps1          # đóng băng worker bằng PyInstaller -> apps\inference\dist\localsub-worker\ + smoke test
 cd apps\desktop
 npx tauri build --bundles nsis --config src-tauri/tauri.bundle.conf.json
-# kết quả: apps\desktop\src-tauri\target\release\bundle\nsis\LocalSub.NPU_0.7.0_x64-setup.exe
+# kết quả: apps\desktop\src-tauri\target\release\bundle\nsis\LocalSub.NPU_0.8.0_x64-setup.exe
 ```
 
 `tauri.bundle.conf.json` chỉ dùng khi build bộ cài (thêm thư mục worker vào gói); `npm run tauri dev` không cần nó.
@@ -415,7 +415,6 @@ số câu dịch lỗi (`translation_fallback_lines`) và mã lỗi — **không
 
 - `auto` cho **nhận dạng**: thử **NPU → GPU → CPU**, dùng thiết bị đầu tiên chạy được và ghi lý do chuyển.
 - `auto` cho **dịch** (từ 0.6.0): thử **GPU → NPU → CPU**. LLM trên NPU dùng shape tĩnh và chỉ xử lý một chuỗi mỗi lần, nên dịch nhiều dòng song song trên GPU thường nhanh hơn nhiều.
-- `GPU+NPU` (chỉ cho **dịch**, từ 0.7.0): nạp model dịch trên cả GPU và NPU, hai thiết bị cùng lấy việc từ **một hàng đợi** — xem mục *Dịch song song GPU+NPU* bên dưới.
 - `NPU` / `GPU` / `CPU`: bắt buộc thiết bị đó; nếu không có sẽ báo lỗi `DEVICE_UNAVAILABLE`, không tự đổi.
 - Whisper được giải phóng khỏi bộ nhớ trước khi nạp model dịch, nên có thể chạy cả hai trên NPU.
 - Gợi ý bắt đầu: Whisper trên `NPU`, dịch trên `auto` (tức GPU). So sánh bằng `benchmark-devices.ps1` rồi cố định thiết bị nhanh nhất.
@@ -434,18 +433,18 @@ Những thay đổi trong 0.6.0:
 | `auto` cho dịch ưu tiên **GPU** | Tránh chi phí prefill theo shape tĩnh của NPU |
 | Whisper xử lý theo **đoạn ~5 phút**, cắt tại chỗ im lặng nhất, bỏ qua đoạn im lặng | Có tiến độ `%` và thời gian còn lại ở bước Nhận dạng; bộ nhớ ổn định với video nhiều giờ |
 
-Tinh chỉnh bằng biến môi trường `LOCALSUB_TRANSLATION_PARALLEL` (1–16, mặc định 4 trên GPU/CPU, 1 trên NPU). Tăng lên 8 nếu GPU còn dư tải trong chart; giảm nếu thiếu VRAM hoặc gặp lỗi bộ nhớ.
+Từ 0.8.0 số lô mỗi lần được tự điều chỉnh (xem mục dưới); `LOCALSUB_TRANSLATION_PARALLEL` (1–16) chỉ dùng khi muốn cố định.
 
-### Dịch song song GPU+NPU (0.7.0)
+### GPU tự điều chỉnh số lô dịch (0.8.0)
 
-Chọn **Thiết bị dịch = GPU+NPU** (dòng lệnh: `--translation-device HYBRID`):
+Khi sinh chữ, LLM bị giới hạn bởi **băng thông RAM**: mỗi bước phải đọc lại toàn bộ trọng số model (Qwen3 8B khoảng 4,9 GB). Gửi nhiều lô trong một lần gọi giúp đọc trọng số một lần mà sinh chữ cho nhiều câu, nên đây là cách tăng tốc chính trên GPU.
 
-- Phụ đề được chia thành lô 8 dòng trong một hàng đợi chung. GPU lấy 4 lô mỗi lần (batch song song), NPU lấy 1 lô. Thiết bị nào xong trước lấy lô tiếp theo, nên thiết bị nhanh tự làm nhiều hơn; thứ tự dòng và ngữ cảnh vẫn giữ nguyên.
-- GPU bắt đầu dịch ngay, không phải chờ NPU biên dịch model (lần đầu có thể mất vài phút, sau đó dùng cache).
-- Nếu NPU không có, không đủ RAM (cần khoảng 2,5 lần dung lượng model còn trống, vì phải nạp 2 bản), không nạp được hoặc lỗi giữa chừng, các lô của nó được trả lại hàng đợi và GPU dịch tiếp; lý do ghi ở *Chuyển thiết bị*. Job chỉ lỗi khi cả hai thiết bị đều hỏng.
-- Lịch sử (rê chuột lên cột RTF tổng) ghi số dòng mỗi thiết bị đã dịch, ví dụ `GPU 900 · NPU 300`.
+- Trên GPU/CPU, app thử lần lượt **4 → 8 → 16 lô mỗi lần** (lô đầu tiên để làm nóng, không tính), đo số câu/giây và chỉ lên mức tiếp theo khi nhanh hơn ít nhất 10%. Dừng ở mức tốt nhất cho đến hết job.
+- Nếu một mức lớn bị lỗi (ví dụ thiếu bộ nhớ GPU), lần gọi đó chạy lại từng câu và app giữ mức thấp hơn; không mất câu nào.
+- NPU luôn dịch 1 lô mỗi lần. Đặt `LOCALSUB_TRANSLATION_PARALLEL` để cố định mức và tắt tự điều chỉnh.
+- Lịch sử (rê chuột lên cột RTF tổng) hiện mức đã chọn, ví dụ `dịch ×8 lô/lần`; `jobs.jsonl` ghi `translation_parallel` và `translation_tuning` (mức, câu/giây).
 
-**Kỳ vọng thực tế:** GPU và NPU trên Intel Core Ultra dùng chung RAM và băng thông bộ nhớ, trong khi tốc độ sinh token của LLM phụ thuộc nhiều vào băng thông này. Vì vậy mức tăng tốc thường **thấp hơn nhiều so với 2 lần**, và có thể không tăng nếu máy bị giới hạn nhiệt/điện. Hãy so sánh bằng cách chạy cùng một video với `GPU` rồi với `GPU+NPU` và xem cột *Dịch* trong Lịch sử. Với video ngắn (dưới ~200 dòng) thời gian nạp thêm model trên NPU thường lớn hơn phần tiết kiệm được.
+**Vì sao bỏ chế độ GPU+NPU (có ở 0.7.0):** GPU và NPU dùng chung RAM LPDDR5X; mỗi thiết bị giữ một bản model và cùng tranh băng thông. Đo thực tế với video 2h28m: chỉ GPU dịch mất 32m50s, GPU+NPU mất 38m22s (chậm hơn ~17%) và tốn thêm RAM cho bản model thứ hai. Job cũ vẫn hiện đúng trong Lịch sử; dòng lệnh `--translation-device HYBRID` giờ bị từ chối.
 
 ### Giao diện (0.7.0)
 
@@ -479,7 +478,7 @@ Cách đọc: nếu ở bước Dịch mà GPU thấp và CPU cao, model dịch 
 | `LOCALSUB_MODEL_DIR` | `<repo>\data\models` | Thư mục model |
 | `LOCALSUB_OUTPUT_DIR` | `<repo>\data\output` | Thư mục kết quả |
 | `LOCALSUB_LOG_LEVEL` | `INFO` | `DEBUG`, `INFO`, `WARNING`, `ERROR` |
-| `LOCALSUB_TRANSLATION_PARALLEL` | `4` (NPU: `1`) | Số lô dịch gửi cùng lúc cho model (1–16); áp dụng cho mỗi thiết bị, kể cả ở chế độ GPU+NPU |
+| `LOCALSUB_TRANSLATION_PARALLEL` | tự động (NPU: `1`) | Cố định số lô dịch mỗi lần gọi model (1–16) và tắt tự điều chỉnh. Không đặt: GPU/CPU tự chọn 4/8/16, NPU dùng 1 |
 | `LOCALSUB_WORKER_DIR` | tự dò | App desktop: thư mục chứa `app\main.py` |
 | `LOCALSUB_WORKER_PYTHON` | `<worker>\.venv\Scripts\python.exe` | App desktop: Python dùng để chạy worker |
 
@@ -578,8 +577,9 @@ CI (GitHub Actions) chạy Python lint/test, frontend lint/type-check/test/build
    - 4A: quản lý model trong app (tải/tiếp tục/xóa, kiểm tra toàn vẹn), lịch sử xử lý, giao diện tiếng Việt.
    - 4B: bộ cài Windows NSIS kèm worker đóng gói sẵn (PyInstaller), workflow Release trên GitHub.
 5. Wave 5A: dịch song song, dịch lại theo nhóm, nhận dạng theo đoạn có tiến độ, `auto` dịch ưu tiên GPU, chart tải CPU/GPU/NPU, lịch sử tách thời gian nhận dạng/dịch. ✅
-6. Wave 5B: dịch song song GPU+NPU chung hàng đợi, giao diện gọn một màn hình có tab. ✅
-7. Tiếp theo (backlog): chạy song song nhận dạng (NPU) và dịch (GPU) theo pipeline, chẩn đoán rõ lỗi driver NPU, preset tốc độ/chất lượng, benchmark thiết bị ngay trong app, ký số bộ cài, kèm FFmpeg trong bộ cài, tự cập nhật.
+6. Wave 5B: giao diện gọn một màn hình có tab. ✅ (chế độ GPU+NPU thử nghiệm ở 0.7.0 đã bỏ ở 0.8.0)
+7. Wave 6A: GPU tự điều chỉnh 4/8/16 lô mỗi lần, lùi mức khi lỗi bộ nhớ. ✅
+8. Tiếp theo: Wave 6B chạy chồng nhận dạng (NPU) và dịch (GPU) theo từng đoạn; backlog: chẩn đoán rõ lỗi driver NPU, preset tốc độ/chất lượng, benchmark thiết bị ngay trong app, ký số bộ cài, kèm FFmpeg trong bộ cài, tự cập nhật.
 
 ## Giấy phép
 
