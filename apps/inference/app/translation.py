@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 import re
+import threading
 import time
 import unicodedata
 from collections.abc import Callable, Sequence
@@ -384,6 +385,84 @@ class ParallelTuner:
         return True
 
 
+def model_size_bytes(path: Path) -> int:
+    try:
+        return sum(f.stat().st_size for f in path.rglob("*") if f.is_file())
+    except OSError:
+        return 0
+
+
+def available_memory_bytes() -> int | None:
+    """Free physical memory (the iGPU and NPU share system RAM on Intel Core Ultra)."""
+    try:
+        if os.name == "nt":
+            import ctypes
+
+            class _Status(ctypes.Structure):
+                _fields_ = [
+                    ("dwLength", ctypes.c_ulong),
+                    ("dwMemoryLoad", ctypes.c_ulong),
+                    ("ullTotalPhys", ctypes.c_ulonglong),
+                    ("ullAvailPhys", ctypes.c_ulonglong),
+                    ("ullTotalPageFile", ctypes.c_ulonglong),
+                    ("ullAvailPageFile", ctypes.c_ulonglong),
+                    ("ullTotalVirtual", ctypes.c_ulonglong),
+                    ("ullAvailVirtual", ctypes.c_ulonglong),
+                    ("ullAvailExtendedVirtual", ctypes.c_ulonglong),
+                ]
+
+            status = _Status()
+            status.dwLength = ctypes.sizeof(_Status)
+            if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):  # type: ignore[attr-defined]
+                return int(status.ullAvailPhys)
+            return None
+        return int(os.sysconf("SC_AVPHYS_PAGES") * os.sysconf("SC_PAGE_SIZE"))
+    except (OSError, ValueError, AttributeError):
+        return None
+
+
+class LineFeed:
+    """Thread-safe, append-only list of source lines that grows while Whisper runs.
+
+    The producer calls ``extend`` as subtitle lines become final and ``close`` when no more
+    will come; ``abort`` stops the consumer early (e.g. the transcription failed)."""
+
+    def __init__(self, lines: Sequence[str] = (), closed: bool = False) -> None:
+        self._lines = list(lines)
+        self._closed = closed
+        self._aborted = False
+        self._cond = threading.Condition()
+
+    def extend(self, lines: Sequence[str]) -> None:
+        with self._cond:
+            self._lines.extend(lines)
+            self._cond.notify_all()
+
+    def close(self) -> None:
+        with self._cond:
+            self._closed = True
+            self._cond.notify_all()
+
+    def abort(self) -> None:
+        with self._cond:
+            self._aborted = self._closed = True
+            self._cond.notify_all()
+
+    @property
+    def aborted(self) -> bool:
+        return self._aborted
+
+    def __len__(self) -> int:
+        with self._cond:
+            return len(self._lines)
+
+    def wait(self, count: int) -> tuple[list[str], bool]:
+        """Block until ``count`` lines exist or the feed is closed; returns a snapshot."""
+        with self._cond:
+            self._cond.wait_for(lambda: len(self._lines) >= count or self._closed)
+            return list(self._lines), self._closed
+
+
 def translate_lines(
     translator: LoadedTranslator,
     lines: Sequence[str],
@@ -398,42 +477,85 @@ def translate_lines(
     GPU/CPU (``LOCALSUB_TRANSLATION_PARALLEL`` also fixes it) and uses 1 on the NPU."""
     if source == target:
         return TranslationResult(tuple(lines), 0, 0)
-    started = clock()
+    return translate_feed(
+        translator,
+        LineFeed(lines, closed=True),
+        source,
+        target,
+        batch_size,
+        on_progress,
+        parallel,
+        clock,
+    )
+
+
+def translate_feed(
+    translator: LoadedTranslator,
+    feed: LineFeed,
+    source: str,
+    target: str,
+    batch_size: int = DEFAULT_BATCH_SIZE,
+    on_progress: ProgressSink | None = None,
+    parallel: int | None = None,
+    clock: Callable[[], float] = time.perf_counter,
+) -> TranslationResult:
+    """Translate lines as they arrive in ``feed``, in order, until it is closed.
+
+    A unit of ``tuner.parallel`` full batches is sent as soon as enough lines exist; the
+    short tail is sent once the feed closes. Context lines come from the source, so the
+    result is identical to translating the finished list. ``inference_ms`` counts only the
+    time spent translating, not waiting for lines. ``on_progress(done, known)`` reports the
+    lines known so far as the total while the feed is still open."""
     device = translator.device.resolved if translator.device else None
     if parallel is None:
-        fixed = fixed_parallelism(device)
-        tuner = ParallelTuner(fixed=fixed)
+        tuner = ParallelTuner(fixed=fixed_parallelism(device))
     else:
         tuner = ParallelTuner(fixed=max(1, min(parallel, MAX_PARALLEL)))
     engine = _Engine(translator, source, target, tuner.parallel)
     output: list[str] = []
     fallbacks = 0
-    total = len(lines)
-    batches = _batches(lines, batch_size)
-    index = 0
-    while index < len(batches):
+    busy = 0.0
+    while True:
         size = tuner.parallel
+        lines, closed = feed.wait(len(output) + size * batch_size)
+        if feed.aborted:
+            break
+        pending = len(lines) - len(output)
+        if pending <= 0:
+            if closed:
+                break
+            continue
+        full = pending // batch_size
+        count = min(size, full) if full else 1
+        offset = len(output)
+        batches = [
+            (
+                list(lines[o : o + batch_size]),
+                list(lines[max(0, o - CONTEXT_LINES) : o]),
+            )
+            for o in range(offset, min(len(lines), offset + count * batch_size), batch_size)
+        ]
         engine.parallel = size
-        unit = batches[index : index + size]
         t0 = clock()
         try:
-            values, missed = engine.unit([(b, c) for _, b, c in unit])
+            values, missed = engine.unit(batches)
         except LocalSubError:
             if tuner.back_off(size):
                 continue  # retry the same batches with fewer per call
             raise
+        elapsed = clock() - t0
+        busy += elapsed
         done = sum(len(v) for v in values)
-        tuner.observe(size, len(unit) == size, done, clock() - t0)
+        tuner.observe(size, len(batches) == size, done, elapsed)
         fallbacks += missed
         for v in values:
             output.extend(v)
-        index += len(unit)
         if on_progress:
-            on_progress(len(output), total)
+            on_progress(len(output), max(len(output), len(feed)))
     return TranslationResult(
         tuple(output),
         fallbacks,
-        int((clock() - started) * 1000),
+        int(busy * 1000),
         parallel=tuner.parallel,
         tuning=tuple(tuner.samples),
     )

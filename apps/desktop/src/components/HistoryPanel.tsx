@@ -111,7 +111,7 @@ export function HistoryPanel(props: { bridge: WorkerBridge | null; refreshKey: n
                           asr: formatDuration(j.asr_ms),
                           translation: j.translate_to ? formatDuration(j.translation_ms) : "—",
                           total: formatDuration(j.total_ms),
-                        }) + (parallelText(j.translation_parallel) ? ` · ${t("history.parallel", { n: parallelText(j.translation_parallel) })}` : "")}
+                        }) + (j.overlap && j.translation_after_asr_ms != null ? ` · ${t("history.overlap", { after: formatDuration(j.translation_after_asr_ms) })}` : "") + (parallelText(j.translation_parallel) ? ` · ${t("history.parallel", { n: parallelText(j.translation_parallel) })}` : "")}
                       >
                         {j.total_rtf ?? j.real_time_factor ?? "—"}
                         {j.total_ms ? (
@@ -120,7 +120,7 @@ export function HistoryPanel(props: { bridge: WorkerBridge | null; refreshKey: n
                               ? t("history.breakdownShort", {
                                   asr: formatDuration(j.asr_ms),
                                   translation: j.translate_to ? formatDuration(j.translation_ms) : "—",
-                                })
+                                }) + (j.overlap ? ` · ${t("history.overlapShort")}` : "")
                               : formatDuration(j.total_ms)}
                           </span>
                         ) : null}

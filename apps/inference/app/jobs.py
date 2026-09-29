@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import gc
+import os
+import threading
 import time
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -15,7 +17,7 @@ from app.config import Settings
 from app.errors import ErrorCode, LocalSubError
 from app.models import DeviceResolution, JobState
 from app.project import FORMATS, export_project, project_from_cues
-from app.segmentation import build_cues
+from app.segmentation import TimedText, build_cues, normalize_text
 from app.subtitles import validate_cues
 
 EventSink = Callable[[dict[str, Any]], None]
@@ -55,6 +57,9 @@ class JobRecord:
     translation_device: DeviceResolution | None = None
     translation_fallback_lines: int | None = None
     translation_parallel: int | None = None  # batches per generate() call after tuning
+    overlap: bool | None = None  # translation ran while Whisper was still transcribing
+    overlap_reason: str | None = None
+    translation_overlap_lines: int | None = None  # lines translated by the overlapping thread
     translation_tuning: list[list[float]] | None = None  # [[parallel, lines/s], ...]
     openvino_version: str | None = None
     source_duration_ms: int | None = None
@@ -111,19 +116,30 @@ def prune_stale_temp(temp_dir: Path, now: float | None = None) -> int:
     return removed
 
 
-def _translate(
+OVERLAP_RAM_FACTOR = 1.3  # free RAM needed, as a multiple of the LLM size, to load it early
+
+
+def stable_lines(segments: Sequence[TimedText], duration_ms: int | None) -> list[str]:
+    """Cue texts that later chunks cannot change.
+
+    A segment's cues depend only on its own text and duration, except that a segment with
+    no end time borrows the next segment's start. So every cue before the newest segment is
+    final; the newest segment's cues are left for the next chunk (or the final pass)."""
+    starts = [s.start_ms for s in segments if normalize_text(s.text)]
+    if not starts:
+        return []
+    newest = max(starts)
+    return [c.text for c in build_cues(segments, duration_ms) if c.start_ms < newest]
+
+
+def _load_translator(
     settings: Settings,
     request: JobRequest,
     record: JobRecord,
     llm_path: Path,
     available: tuple[str, ...],
-    texts: list[str],
-    source_lang: str,
-    target: str,
-    send: Callable[[dict[str, Any]], None],
-    on_progress: Callable[[int, int], None],
     llm_factory: translation.LLMFactory | None,
-) -> translation.TranslationResult:
+) -> translation.LoadedTranslator:
     llm_settings = _settings_with_device(settings, request.translation_device)
     llm_kwargs = {"factory": llm_factory} if llm_factory else {}
     translator = translation.load_translator(
@@ -135,25 +151,159 @@ def _translate(
         cache_dir=settings.model_dir / ".ov-cache",
         **llm_kwargs,
     )
-    resolution = translator.device
-    record.translation_device = resolution
+    record.translation_device = translator.device
     record.timings_ms["load_translation_model"] = translator.load_ms
-    send(
-        {
-            "type": "progress",
-            "stage": "translating",
-            "done": 0,
-            "total": len(texts),
-            "device": resolution.resolved,
-            "fallback_reason": resolution.fallback_reason,
-        }
+    return translator
+
+
+def _device_event(translator: translation.LoadedTranslator, done: int, total: int) -> dict:
+    return {
+        "type": "progress",
+        "stage": "translating",
+        "done": done,
+        "total": total,
+        "device": translator.device.resolved,
+        "fallback_reason": translator.device.fallback_reason,
+    }
+
+
+def overlap_plan(
+    request: JobRequest,
+    asr_device: str | None,
+    available: tuple[str, ...],
+    llm_bytes: int = 0,
+    free_bytes: int | None = None,
+) -> tuple[bool, str]:
+    """Whether translation may run on its own thread while Whisper transcribes.
+
+    Only when the two models land on different devices (default: Whisper on NPU, LLM on
+    GPU); on one device they would just take turns and compete for memory.
+    ``LOCALSUB_OVERLAP=0`` disables it, ``force`` allows one device (benchmarks)."""
+    mode = os.getenv("LOCALSUB_OVERLAP", "").strip().lower()
+    if mode in ("0", "off", "false", "no"):
+        return False, "disabled by LOCALSUB_OVERLAP"
+    preference = request.translation_device or "auto"
+    llm_device = next(
+        (d for d in translation.candidate_devices(preference) if d in available),
+        preference,
     )
-    try:
-        return translation.translate_lines(
-            translator, texts, source_lang, target, on_progress=on_progress
+    if mode != "force" and llm_device == asr_device:
+        return False, f"speech and translation both on {asr_device}"
+    if free_bytes is not None and llm_bytes and free_bytes < llm_bytes * OVERLAP_RAM_FACTOR:
+        gib = 1024**3
+        return False, (
+            f"not enough free RAM to load translation early "
+            f"({free_bytes / gib:.1f} GiB free, {llm_bytes * OVERLAP_RAM_FACTOR / gib:.1f} needed)"
         )
-    finally:
-        del translator
+    return True, f"speech on {asr_device}, translation on {llm_device}"
+
+
+class OverlapTranslation:
+    """Loads the LLM and translates finished subtitle lines on its own thread while Whisper
+    keeps transcribing. The main thread feeds lines, then calls ``finish``."""
+
+    def __init__(
+        self,
+        load: Callable[[], translation.LoadedTranslator],
+        target: str,
+        send: Callable[[dict[str, Any]], None],
+    ) -> None:
+        self.load = load
+        self.target = target
+        self.send = send
+        self.feed = translation.LineFeed()
+        self.fed: list[str] = []
+        self.diverged = False
+        self.source: str | None = None
+        self.language_known = threading.Event()
+        self.translator: translation.LoadedTranslator | None = None
+        self.result: translation.TranslationResult | None = None
+        self.error: BaseException | None = None
+        self.thread = threading.Thread(target=self._run, name="translate-overlap", daemon=True)
+
+    def start(self) -> None:
+        self.thread.start()
+
+    def _run(self) -> None:
+        try:
+            self.translator = self.load()
+            self.language_known.wait()
+            if self.source is None or self.feed.aborted:
+                return
+            self.send(_device_event(self.translator, 0, len(self.feed)))
+            self.result = translation.translate_feed(
+                self.translator,
+                self.feed,
+                self.source,
+                self.target,
+                on_progress=lambda done, total: self.send(
+                    {"type": "progress", "stage": "translating", "done": done, "total": total}
+                ),
+            )
+        except BaseException as exc:  # noqa: BLE001 - re-raised on the main thread
+            self.error = exc
+
+    def set_language(self, source: str | None) -> None:
+        """Language of the speech once known; ``None`` = nothing to translate here."""
+        if self.language_known.is_set():
+            return
+        if source in translation.LANGUAGE_NAMES and source != self.target:
+            self.source = source
+        self.language_known.set()
+
+    def offer(self, stable: list[str]) -> None:
+        """Queue lines that will not change any more. If an earlier line did change (it
+        should not), stop feeding; ``finish`` translates the rest the normal way."""
+        if self.diverged:
+            return
+        if stable[: len(self.fed)] != self.fed:
+            self.diverged = True
+            return
+        new = stable[len(self.fed) :]
+        if new:
+            self.fed.extend(new)
+            self.feed.extend(new)
+
+    def cancel(self) -> None:
+        self.feed.abort()
+        self.language_known.set()
+
+    def finish(self, texts: list[str]) -> int:
+        """Feed the final lines, wait for the thread; returns how many leading ``texts`` the
+        overlapped run translated (the rest still need translating)."""
+        self.offer(texts)
+        self.feed.close()
+        self.language_known.set()
+        self.thread.join()
+        if isinstance(self.error, LocalSubError):
+            raise self.error
+        if self.error is not None:
+            raise LocalSubError(
+                ErrorCode.TRANSLATION_FAILED, f"Translation failed: {str(self.error)[:200]}"
+            ) from self.error
+        if self.result is None:
+            return 0
+        done = len(self.result.lines)
+        return done if texts[:done] == self.fed[:done] else 0
+
+
+def _translate(
+    translator: translation.LoadedTranslator,
+    texts: list[str],
+    source_lang: str,
+    target: str,
+    send: Callable[[dict[str, Any]], None],
+) -> translation.TranslationResult:
+    send(_device_event(translator, 0, len(texts)))
+    return translation.translate_lines(
+        translator,
+        texts,
+        source_lang,
+        target,
+        on_progress=lambda done, total: send(
+            {"type": "progress", "stage": "translating", "done": done, "total": total}
+        ),
+    )
 
 
 def run_job(
@@ -179,9 +329,12 @@ def run_job(
     job_started = time.perf_counter()
     temp_audio = settings.output_dir / ".tmp" / f"{record.job_id}.wav"
 
+    send_lock = threading.Lock()  # the overlap thread emits too; keep JSON lines whole
+
     def send(event: dict[str, Any]) -> None:
         if emit:
-            emit({"job_id": record.job_id, "at": datetime.now(UTC), **event})
+            with send_lock:
+                emit({"job_id": record.job_id, "at": datetime.now(UTC), **event})
 
     def transition(state: JobState, **extra: Any) -> None:
         record.state = state
@@ -236,6 +389,40 @@ def run_job(
         record.device_attempts = model.attempts
         record.timings_ms["load_model"] = model.load_ms
 
+        def speech_language(detected: str | None) -> str | None:
+            if request.task == "translate":
+                return "en"
+            return request.language if request.language != "auto" else detected
+
+        overlap: OverlapTranslation | None = None
+        target = request.translate_to
+        if target and llm_path is not None:
+            record.overlap, record.overlap_reason = overlap_plan(
+                request,
+                model.device.resolved,
+                available,
+                translation.model_size_bytes(llm_path),
+                translation.available_memory_bytes(),
+            )
+            if record.overlap:
+                path = llm_path
+                overlap = OverlapTranslation(
+                    lambda: _load_translator(
+                        settings, request, record, path, available, llm_factory
+                    ),
+                    target,
+                    send,
+                )
+                overlap.start()
+
+        def on_chunk(segments: tuple[TimedText, ...], detected: str | None) -> None:
+            if overlap is None:
+                return
+            language = speech_language(detected)
+            if language is not None or segments:
+                overlap.set_language(language)
+            overlap.offer(stable_lines(segments, record.source_duration_ms))
+
         transition(
             JobState.TRANSCRIBING,
             device=model.device.resolved,
@@ -249,15 +436,22 @@ def run_job(
                 "total": record.source_duration_ms or 0,
             }
         )
-        result = whisper.transcribe(
-            model,
-            samples,
-            request.language,
-            request.task,
-            on_progress=lambda done, total: send(
-                {"type": "progress", "stage": "transcribing", "done": done, "total": total}
-            ),
-        )
+        try:
+            result = whisper.transcribe(
+                model,
+                samples,
+                request.language,
+                request.task,
+                on_progress=lambda done, total: send(
+                    {"type": "progress", "stage": "transcribing", "done": done, "total": total}
+                ),
+                on_chunk=on_chunk,
+            )
+        except BaseException:
+            if overlap is not None:
+                overlap.cancel()
+            raise
+        asr_finished = time.perf_counter()
         record.timings_ms["inference"] = result.inference_ms
         record.detected_language = result.detected_language
         if record.source_duration_ms:
@@ -269,17 +463,15 @@ def run_job(
         try:
             validate_cues(cues)
         except ValueError as exc:
+            if overlap is not None:
+                overlap.cancel()
             raise LocalSubError(ErrorCode.SUBTITLE_VALIDATION_FAILED, str(exc)) from exc
 
-        if request.task == "translate":
-            source_lang: str | None = "en"
-        elif request.language != "auto":
-            source_lang = request.language
-        else:
-            source_lang = record.detected_language
-
+        source_lang = speech_language(record.detected_language)
         translations: list[str] | None = None
-        target = request.translate_to
+        if overlap is not None and not (cues and source_lang != target):
+            overlap.cancel()  # nothing to translate; the thread exits after loading
+            overlap = None
         if target and llm_path is not None and cues and source_lang != target:
             if source_lang not in translation.LANGUAGE_NAMES:
                 raise LocalSubError(
@@ -288,28 +480,40 @@ def run_job(
                 )
             transition(JobState.TRANSLATING, model_id=request.translation_model)
             texts = [c.text for c in cues]
-
-            def on_progress(done: int, total: int) -> None:
-                send({"type": "progress", "stage": "translating", "done": done, "total": total})
-
-            translated = _translate(
-                settings,
-                request,
-                record,
-                llm_path,
-                available,
-                texts,
-                source_lang,
-                target,
-                send,
-                on_progress,
-                llm_factory,
+            done = 0
+            head: translation.TranslationResult | None = None
+            translator = None
+            if overlap is not None:
+                done = overlap.finish(texts)
+                translator = overlap.translator
+                head = overlap.result if done else None  # a diverged run is discarded
+                record.translation_overlap_lines = done
+            if done < len(texts):
+                if translator is None:
+                    translator = _load_translator(
+                        settings, request, record, llm_path, available, llm_factory
+                    )
+                tail = _translate(translator, texts[done:], source_lang, target, send)
+            else:
+                tail = translation.TranslationResult((), 0, 0)
+            translations = [*(head.lines[:done] if head else ()), *tail.lines]
+            record.translation_fallback_lines = (head.fallback_lines if head else 0) + (
+                tail.fallback_lines
             )
-            translations = list(translated.lines)
-            record.translation_fallback_lines = translated.fallback_lines
-            record.timings_ms["translation"] = translated.inference_ms
-            record.translation_parallel = translated.parallel
-            record.translation_tuning = [list(t) for t in translated.tuning] or None
+            record.timings_ms["translation"] = (head.inference_ms if head else 0) + (
+                tail.inference_ms
+            )
+            if overlap is not None:
+                # Wall time translation added after Whisper finished: what overlap saves.
+                record.timings_ms["translation_after_asr"] = int(
+                    (time.perf_counter() - asr_finished) * 1000
+                )
+            tuned = tail if tail.parallel is not None else head
+            record.translation_parallel = tuned.parallel if tuned else None
+            record.translation_tuning = [
+                list(t) for t in (head.tuning if head else ()) + tail.tuning
+            ] or None
+            del translator
             gc.collect()
 
         transition(JobState.RENDERING)

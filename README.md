@@ -8,7 +8,7 @@
 - Sửa phụ đề trực tiếp trong bảng, xuất **SRT, VTT, TXT** và file dự án `.localsub.json`.
 - Media không bao giờ rời khỏi máy. Sau khi tải model lần đầu, không cần Internet và không cần API key.
 
-> Phiên bản hiện tại: **0.8.0 (Wave 6A: GPU tự điều chỉnh số lô dịch mỗi lần, bỏ chế độ GPU+NPU)**. Có **bộ cài Windows** (không cần Python/Node/Rust) — xem
+> Phiên bản hiện tại: **0.8.0 (Wave 6: nhận dạng trên NPU chạy chồng với dịch trên GPU, GPU tự điều chỉnh số lô dịch, bỏ chế độ GPU+NPU)**. Có **bộ cài Windows** (không cần Python/Node/Rust) — xem
 > [Cài nhanh bằng bộ cài](#cài-nhanh-bằng-bộ-cài). Muốn phát triển hoặc chạy dòng lệnh thì cài từ mã nguồn (mục 2–6).
 
 ## Cài nhanh bằng bộ cài
@@ -435,6 +435,27 @@ Những thay đổi trong 0.6.0:
 
 Từ 0.8.0 số lô mỗi lần được tự điều chỉnh (xem mục dưới); `LOCALSUB_TRANSLATION_PARALLEL` (1–16) chỉ dùng khi muốn cố định.
 
+### Nhận dạng và dịch chạy chồng (0.8.0)
+
+Mặc định Whisper chạy trên **NPU** và LLM dịch chạy trên **GPU**, nên hai bước có thể chạy cùng lúc thay vì nối tiếp:
+
+- Ngay khi Whisper bắt đầu, model dịch được nạp lên GPU song song (không còn chờ nạp model sau khi nhận dạng xong).
+- Sau mỗi đoạn 5 phút, các câu phụ đề đã chắc chắn (mọi câu trừ đoạn nói cuối cùng, vì câu đó có thể đổi thời lượng khi đoạn sau tới) được đưa vào hàng đợi và GPU dịch ngay.
+- Khi Whisper xong, app chỉ còn dịch phần đuôi. Tổng thời gian gần bằng **bước lâu hơn** cộng phần đuôi, thay vì nhận dạng + dịch.
+- Lô dịch, ngữ cảnh 2 câu trước và prompt giống hệt khi dịch tuần tự; test tự động xác nhận cùng prompt. Kết quả dịch có thể khác vài câu vì batch khác nhau làm LLM tính toán số thực hơi khác.
+- Thanh tiến độ: khi đang nhận dạng, ô *Dịch* cũng sáng và hiện số câu đã dịch / số câu đã có.
+- Lịch sử: dòng dưới RTF tổng ghi `chạy chồng`; rê chuột để xem thời gian dịch còn lại sau khi nhận dạng xong. `jobs.jsonl` ghi `overlap`, `overlap_reason`, `translation_overlap_lines`, `timings_ms.translation_after_asr`.
+
+App **không chạy chồng** (tự quay về tuần tự và ghi lý do vào `overlap_reason`) khi:
+
+| Trường hợp | Lý do |
+|---|---|
+| Nhận dạng và dịch cùng một thiết bị (ví dụ cùng GPU) | Hai model chỉ thay phiên nhau, không nhanh hơn |
+| RAM trống ít hơn ~1,3 lần dung lượng model dịch | Tránh nạp model dịch sớm khi thiếu RAM |
+| `LOCALSUB_OVERLAP=0` | Tắt thủ công |
+
+Lưu ý: GPU và NPU vẫn dùng chung băng thông RAM. Whisper small nhỏ (~250 MB) và chủ yếu tốn tính toán nên ít tranh với LLM hơn nhiều so với việc hai bản LLM cùng dịch, nhưng tốc độ mỗi bước khi chạy chồng có thể chậm đi một chút.
+
 ### GPU tự điều chỉnh số lô dịch (0.8.0)
 
 Khi sinh chữ, LLM bị giới hạn bởi **băng thông RAM**: mỗi bước phải đọc lại toàn bộ trọng số model (Qwen3 8B khoảng 4,9 GB). Gửi nhiều lô trong một lần gọi giúp đọc trọng số một lần mà sinh chữ cho nhiều câu, nên đây là cách tăng tốc chính trên GPU.
@@ -478,6 +499,7 @@ Cách đọc: nếu ở bước Dịch mà GPU thấp và CPU cao, model dịch 
 | `LOCALSUB_MODEL_DIR` | `<repo>\data\models` | Thư mục model |
 | `LOCALSUB_OUTPUT_DIR` | `<repo>\data\output` | Thư mục kết quả |
 | `LOCALSUB_LOG_LEVEL` | `INFO` | `DEBUG`, `INFO`, `WARNING`, `ERROR` |
+| `LOCALSUB_OVERLAP` | bật | `0` tắt chạy chồng nhận dạng/dịch; `force` cho phép cả khi cùng thiết bị (chỉ để đo) |
 | `LOCALSUB_TRANSLATION_PARALLEL` | tự động (NPU: `1`) | Cố định số lô dịch mỗi lần gọi model (1–16) và tắt tự điều chỉnh. Không đặt: GPU/CPU tự chọn 4/8/16, NPU dùng 1 |
 | `LOCALSUB_WORKER_DIR` | tự dò | App desktop: thư mục chứa `app\main.py` |
 | `LOCALSUB_WORKER_PYTHON` | `<worker>\.venv\Scripts\python.exe` | App desktop: Python dùng để chạy worker |
@@ -579,7 +601,8 @@ CI (GitHub Actions) chạy Python lint/test, frontend lint/type-check/test/build
 5. Wave 5A: dịch song song, dịch lại theo nhóm, nhận dạng theo đoạn có tiến độ, `auto` dịch ưu tiên GPU, chart tải CPU/GPU/NPU, lịch sử tách thời gian nhận dạng/dịch. ✅
 6. Wave 5B: giao diện gọn một màn hình có tab. ✅ (chế độ GPU+NPU thử nghiệm ở 0.7.0 đã bỏ ở 0.8.0)
 7. Wave 6A: GPU tự điều chỉnh 4/8/16 lô mỗi lần, lùi mức khi lỗi bộ nhớ. ✅
-8. Tiếp theo: Wave 6B chạy chồng nhận dạng (NPU) và dịch (GPU) theo từng đoạn; backlog: chẩn đoán rõ lỗi driver NPU, preset tốc độ/chất lượng, benchmark thiết bị ngay trong app, ký số bộ cài, kèm FFmpeg trong bộ cài, tự cập nhật.
+8. Wave 6B: nhận dạng (NPU) và dịch (GPU) chạy chồng theo từng đoạn, nạp model dịch song song. ✅
+9. Tiếp theo (backlog): chẩn đoán rõ lỗi driver NPU, preset tốc độ/chất lượng, benchmark thiết bị ngay trong app, ký số bộ cài, kèm FFmpeg trong bộ cài, tự cập nhật.
 
 ## Giấy phép
 

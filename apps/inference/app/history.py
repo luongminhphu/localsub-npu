@@ -52,6 +52,8 @@ def summarize(record: dict[str, Any]) -> dict[str, Any]:
         "asr_ms": timings.get("inference"),
         "translation_ms": timings.get("translation"),
         "translation_parallel": record.get("translation_parallel"),
+        "overlap": record.get("overlap"),
+        "translation_after_asr_ms": timings.get("translation_after_asr"),
         "cue_count": record.get("cue_count"),
         "translation_fallback_lines": record.get("translation_fallback_lines"),
         "error_code": record.get("error_code"),

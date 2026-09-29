@@ -71,6 +71,8 @@ export interface JobView {
   translationDevice: string | null;
   translationFallback: string | null;
   progress: { stage: string | null; done: number; total: number } | null;
+  /** Latest progress per stage: translation reports while transcription still runs. */
+  progressByStage: Record<string, { done: number; total: number }>;
   outputs: string[];
   error: string | null;
   summary: Record<string, unknown> | null;
@@ -155,6 +157,10 @@ export interface HistoryJob {
   translation_ms?: number | null;
   /** Prompts per generate() call the translation settled on after auto-tuning. */
   translation_parallel?: number | null;
+  /** Translation ran while speech recognition was still going (Wave 6B). */
+  overlap?: boolean | null;
+  /** Wall time translation still needed after speech recognition finished. */
+  translation_after_asr_ms?: number | null;
 }
 
 export interface JobHistory {
