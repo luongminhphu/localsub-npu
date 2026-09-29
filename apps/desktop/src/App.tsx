@@ -187,15 +187,25 @@ export function App() {
     setMarkers((cur) => (cur.length && cur[cur.length - 1].stage === job.stage ? cur : [...cur, { at: Date.now(), stage: job.stage as string }]));
   }, [job.stage]);
   // When the current progress stage started, for a linear ETA.
-  const progressStart = useRef<{ stage: string | null; at: number } | null>(null);
-  if (job.progress && progressStart.current?.stage !== job.progress.stage) {
-    progressStart.current = { stage: job.progress.stage, at: Date.now() };
+  // Per stage, because overlapped translation interleaves its events with transcription.
+  // ETA baseline per stage, taken when the stage becomes the current one, so lines that
+  // overlapped translation finished earlier do not skew the rate.
+  const progressStart = useRef<Record<string, { at: number; done: number }>>({});
+  if (!running) progressStart.current = {};
+  if (job.stage && job.progressByStage[job.stage] && !progressStart.current[job.stage]) {
+    progressStart.current[job.stage] = { at: Date.now(), done: job.progressByStage[job.stage].done };
   }
+  // Translation may already run (on the GPU) while speech recognition is still going.
+  const overlapping = running && job.stage === "transcribing" && Boolean(job.progressByStage.translating);
   const progressText = (stage: string): string => {
-    const p = job.progress;
-    if (!p || job.stage !== stage || p.stage !== stage || !p.total) return "";
+    const p = job.progressByStage[stage];
+    const live = job.stage === stage || (stage === "translating" && overlapping);
+    if (!p || !running || !live || !p.total) return "";
     const shown = stage === "transcribing" ? `${Math.min(100, Math.round((p.done / p.total) * 100))}%` : `${p.done}/${p.total}`;
-    const eta = estimateRemainingMs(p.done, p.total, Date.now() - (progressStart.current?.at ?? Date.now()));
+    // While overlapping, the translation total still grows, so no ETA for it.
+    if (job.stage !== stage) return ` ${shown}`;
+    const base = progressStart.current[stage] ?? { at: Date.now(), done: 0 };
+    const eta = estimateRemainingMs(p.done - base.done, p.total - base.done, Date.now() - base.at);
     return ` ${shown}${eta === null ? "" : ` · ${t("job.eta", { eta: formatDuration(eta) })}`}`;
   };
   const hasTranslation = Boolean(project?.cues.some((c) => c.translation !== null));
@@ -415,6 +425,7 @@ export function App() {
               job.status === "completed" ? "done"
               : idx < activeIndex ? "done"
               : idx === activeIndex ? (job.status === "failed" ? "failed" : "active")
+              : s === "translating" && overlapping ? "active"
               : "";
             return <li key={s} className={state}>{t(`steps.${s}` as MessageKey)}{progressText(s)}</li>;
           })}

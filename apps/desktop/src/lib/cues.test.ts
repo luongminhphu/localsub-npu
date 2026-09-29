@@ -100,8 +100,29 @@ describe("job reducer", () => {
     expect(state.asrFallback).toBe("NPU not available");
     expect(state.translationDevice).toBe("NPU");
     expect(state.progress).toEqual({ stage: "translating", done: 2, total: 2 });
+    expect(state.progressByStage.translating).toEqual({ done: 2, total: 2 });
     expect(state.outputs).toEqual(["/o/talk.en.srt"]);
     expect(state.project?.cues).toHaveLength(2);
+  });
+
+  it("keeps transcription and overlapped translation progress apart", () => {
+    let state = jobReducer(initialJob, { type: "start" });
+    for (const line of [
+      '{"type":"state","state":"transcribing","device":"NPU"}',
+      '{"type":"progress","stage":"transcribing","done":300000,"total":900000}',
+      '{"type":"progress","stage":"translating","done":0,"total":40,"device":"GPU","fallback_reason":null}',
+      '{"type":"progress","stage":"translating","done":32,"total":40}',
+      '{"type":"progress","stage":"transcribing","done":600000,"total":900000}',
+    ]) {
+      state = jobReducer(state, { type: "event", event: parseWorkerLine(line)! });
+    }
+    expect(state.stage).toBe("transcribing");
+    expect(state.translationDevice).toBe("GPU");
+    expect(state.progressByStage).toEqual({
+      transcribing: { done: 600000, total: 900000 },
+      translating: { done: 32, total: 40 },
+    });
+    expect(jobReducer(state, { type: "start" }).progressByStage).toEqual({});
   });
 
   it("reports worker failures and non-zero exits", () => {

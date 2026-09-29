@@ -142,6 +142,7 @@ export const initialJob: JobView = {
   translationDevice: null,
   translationFallback: null,
   progress: null,
+  progressByStage: {},
   outputs: [],
   error: null,
   summary: null,
@@ -184,7 +185,12 @@ export function jobReducer(state: JobView, action: JobAction): JobView {
 
 function applyEvent(state: JobView, e: WorkerEvent): JobView {
   if (e.type === "progress") {
-    const next = { ...state, progress: { stage: e.stage ?? null, done: e.done ?? 0, total: e.total ?? 0 } };
+    const p = { done: e.done ?? 0, total: e.total ?? 0 };
+    const next = {
+      ...state,
+      progress: { stage: e.stage ?? null, ...p },
+      progressByStage: e.stage ? { ...state.progressByStage, [e.stage]: p } : state.progressByStage,
+    };
     if (e.device) {
       next.translationDevice = e.device;
       next.translationFallback = e.fallback_reason ?? null;

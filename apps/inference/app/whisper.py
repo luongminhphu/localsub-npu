@@ -116,6 +116,7 @@ FRAME_SECONDS = 0.1
 SILENCE_PEAK = 0.003  # ~-50 dBFS: nothing Whisper could transcribe, only hallucinate on
 
 ProgressSink = Callable[[int, int], None]
+ChunkSink = Callable[[tuple[TimedText, ...], str | None], None]
 
 
 def _frame_energy(samples: Sequence[float], start: int, stop: int) -> float:
@@ -181,8 +182,12 @@ def transcribe(
     task: str = "transcribe",
     on_progress: ProgressSink | None = None,
     chunk_seconds: float = CHUNK_SECONDS,
+    on_chunk: ChunkSink | None = None,
 ) -> TranscriptionResult:
-    """Transcribe chunk by chunk; ``on_progress(done_ms, total_ms)`` after each chunk."""
+    """Transcribe chunk by chunk; ``on_progress(done_ms, total_ms)`` after each chunk.
+
+    ``on_chunk(segments_so_far, detected_language)`` also runs after each chunk so a
+    consumer (the overlapping translator) can start on finished lines."""
     if language not in LANGUAGES:
         raise ValueError(f"language must be one of {sorted(LANGUAGES)}")
     if task not in TASKS:
@@ -224,6 +229,8 @@ def transcribe(
                 )
             if not chunks and getattr(result, "texts", None):
                 segments.append(TimedText(offset_ms, None, " ".join(result.texts)))
+        if on_chunk:
+            on_chunk(tuple(segments), language if language != "auto" else detected)
         if on_progress:
             on_progress(min(total_ms, int(round(stop * 1000 / SAMPLE_RATE))), total_ms)
     inference_ms = int((time.perf_counter() - started) * 1000)
