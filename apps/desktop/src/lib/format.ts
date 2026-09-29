@@ -64,8 +64,7 @@ export function estimateRemainingMs(done: number, total: number, elapsedMs: numb
   return Math.round((elapsedMs * (total - done)) / done);
 }
 
-/** " · GPU 900 · NPU 300" for hybrid translation, empty otherwise. */
-export function splitText(lines: Record<string, number> | null | undefined): string {
-  const entries = Object.entries(lines ?? {}).filter(([, n]) => n > 0);
-  return entries.length > 1 ? entries.map(([d, n]) => ` · ${d} ${n}`).join("") : "";
+/** Batches per call the translation used ("×8"), or "" when unknown or not batched. */
+export function parallelText(parallel: number | null | undefined): string {
+  return typeof parallel === "number" && parallel > 1 ? `×${parallel}` : "";
 }

@@ -127,6 +127,9 @@ def test_job_with_translation_writes_bilingual_outputs(tmp_path, settings, insta
     assert completed["project"]["cues"][0]["translation"] == "[vi] Xin chào"
     audit = (settings.output_dir / "logs" / "jobs.jsonl").read_text(encoding="utf-8")
     assert "Xin chào" not in audit
+    entry = json.loads(audit.splitlines()[-1])
+    assert entry["translation_parallel"] == 4  # 2 lines: one unit, tuner never leaves level 1
+    assert entry["translation_tuning"] is None
 
 
 def test_job_translation_model_missing_fails_early(tmp_path, settings, installed_model):

@@ -226,3 +226,97 @@ def test_auto_translation_prefers_gpu_and_npu_uses_best_perf() -> None:
     assert translation.candidate_devices("NPU") == ["NPU"]
     assert translation.npu_properties("NPU")["GENERATE_HINT"] == "BEST_PERF"
     assert translation.npu_properties("GPU") == {}
+
+
+class Clock:
+    """Fake clock: each generate() call on the wrapped LLM costs ``cost(n_prompts)`` s."""
+
+    def __init__(self) -> None:
+        self.now = 0.0
+
+    def __call__(self) -> float:
+        return self.now
+
+
+class TimedLLM(FakeLLM):
+    def __init__(self, clock: Clock, cost, fail_at: int | None = None) -> None:
+        super().__init__()
+        self.clock = clock
+        self.cost = cost
+        self.fail_at = fail_at
+        self.sizes: list[int] = []
+
+    def generate(self, prompt, config=None, **kwargs):
+        n = len(prompt) if isinstance(prompt, list) else 1
+        if self.fail_at is not None and n >= self.fail_at:
+            raise RuntimeError("out of GPU memory")
+        self.sizes.append(n)
+        self.clock.now += self.cost(n)
+        return super().generate(prompt, config, **kwargs)
+
+
+def gpu_translator(llm: FakeLLM) -> translation.LoadedTranslator:
+    return translation.LoadedTranslator(
+        llm, "qwen3-8b-int4-cw", DeviceResolution("GPU", "GPU", ("GPU",)), 0, ("GPU",)
+    )
+
+
+LONG = [f"line {i}" for i in range(1, 801)]  # 100 batches of 8
+
+
+@pytest.fixture
+def batched(monkeypatch):
+    monkeypatch.setattr(translation, "_config", lambda tokens: object())
+
+
+def test_tuner_climbs_while_batching_pays_off(monkeypatch, batched) -> None:
+    monkeypatch.delenv("LOCALSUB_TRANSLATION_PARALLEL", raising=False)
+    clock = Clock()
+    llm = TimedLLM(clock, cost=lambda n: 1.0 + 0.1 * n)  # bandwidth bound: batching is cheap
+    result = translation.translate_lines(gpu_translator(llm), LONG, "en", "vi", clock=clock)
+    assert list(result.lines) == [f"[vi] {x}" for x in LONG]
+    assert result.parallel == 16
+    assert [p for p, _ in result.tuning] == [4, 8, 16]
+    assert llm.sizes[:4] == [4, 4, 8, 16] and set(llm.sizes[4:-1]) == {16}
+
+
+def test_tuner_stops_when_next_level_is_not_faster(monkeypatch, batched) -> None:
+    monkeypatch.delenv("LOCALSUB_TRANSLATION_PARALLEL", raising=False)
+    clock = Clock()
+    llm = TimedLLM(clock, cost=lambda n: 0.5 * n if n <= 4 else 0.6 * n)  # compute bound
+    result = translation.translate_lines(gpu_translator(llm), LONG, "en", "vi", clock=clock)
+    assert result.parallel == 4
+    assert [p for p, _ in result.tuning] == [4, 8]
+    assert set(llm.sizes[3:-1]) == {4}
+
+
+def test_tuner_settles_lower_when_a_bigger_batch_fails(monkeypatch, batched) -> None:
+    # A batch of 16 fails (e.g. GPU out of memory): that unit is run prompt by prompt, which
+    # measures slow, so the tuner settles on 8 and no line is lost.
+    monkeypatch.delenv("LOCALSUB_TRANSLATION_PARALLEL", raising=False)
+    clock = Clock()
+    llm = TimedLLM(clock, cost=lambda n: 1.0 + 0.1 * n, fail_at=16)
+    result = translation.translate_lines(gpu_translator(llm), LONG, "en", "vi", clock=clock)
+    assert list(result.lines) == [f"[vi] {x}" for x in LONG]
+    assert result.parallel == 8 and [p for p, _ in result.tuning] == [4, 8, 16]
+    assert max(llm.sizes) == 8
+
+
+def test_env_and_npu_pin_parallelism(monkeypatch, batched) -> None:
+    clock = Clock()
+    monkeypatch.setenv("LOCALSUB_TRANSLATION_PARALLEL", "2")
+    llm = TimedLLM(clock, cost=lambda n: 1.0)
+    result = translation.translate_lines(gpu_translator(llm), LONG[:80], "en", "vi", clock=clock)
+    assert result.parallel == 2 and result.tuning == () and set(llm.sizes) == {2}
+    monkeypatch.delenv("LOCALSUB_TRANSLATION_PARALLEL")
+    npu = FakeLLM()
+    result = translation.translate_lines(make_translator(npu), LONG[:80], "en", "vi")
+    assert result.parallel == 1 and npu.batched_calls == 0
+
+
+def test_failure_at_minimum_level_still_raises(monkeypatch, batched) -> None:
+    monkeypatch.delenv("LOCALSUB_TRANSLATION_PARALLEL", raising=False)
+    llm = TimedLLM(Clock(), cost=lambda n: 1.0, fail_at=1)
+    with pytest.raises(LocalSubError) as err:
+        translation.translate_lines(gpu_translator(llm), LONG[:40], "en", "vi")
+    assert err.value.code == ErrorCode.TRANSLATION_FAILED

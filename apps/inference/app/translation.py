@@ -8,12 +8,10 @@ from __future__ import annotations
 
 import os
 import re
-import threading
 import time
 import unicodedata
-from collections import deque
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -41,8 +39,10 @@ CONTEXT_LINES = 2
 # pipeline is stateful and single-sequence, so it stays at 1.
 DEFAULT_PARALLEL = 4
 MAX_PARALLEL = 16
-# "auto" for translation prefers the GPU: it batches prompts and leaves the NPU free for
-# Whisper. Users can still pick NPU explicitly.
+TUNE_LADDER = (4, 8, 16)
+TUNE_MIN_GAIN = 0.10  # climb only while the next level is >= 10% faster
+# "auto" for translation prefers the GPU: it batches prompts. Running GPU and NPU together
+# on one job was measured slower (shared LPDDR5X bandwidth), so there is no hybrid mode.
 AUTO_TRANSLATION_DEVICES = ("GPU", "NPU", "CPU")
 
 LLMFactory = Callable[[Path, str, dict[str, Any]], Any]
@@ -66,8 +66,8 @@ class TranslationResult:
     lines: tuple[str, ...]
     fallback_lines: int
     inference_ms: int
-    # Lines translated per device ("GPU": 900, "NPU": 300); used for the hybrid audit record.
-    device_lines: dict[str, int] = field(default_factory=dict)
+    parallel: int | None = None  # batches per generate() call the run settled on
+    tuning: tuple[tuple[int, float], ...] = ()  # (parallel, lines/s) measured while tuning
 
 
 REQUIRED_FILES: tuple[str, ...] = (
@@ -107,12 +107,19 @@ def candidate_devices(preference: str) -> list[str]:
     return [preference]
 
 
-def default_parallelism(device: str | None) -> int:
-    """Prompts per generate() call for the resolved device (env override for tuning)."""
+def fixed_parallelism(device: str | None) -> int | None:
+    """Batches per generate() call when it must not be auto-tuned: the env override, or 1 on
+    the NPU (stateful, single-sequence LLM pipeline). ``None`` means auto-tune."""
     raw = os.getenv("LOCALSUB_TRANSLATION_PARALLEL", "").strip()
     if raw.isdigit() and 1 <= int(raw) <= MAX_PARALLEL:
         return int(raw)
-    return 1 if device == "NPU" else DEFAULT_PARALLEL
+    return 1 if device == "NPU" else None
+
+
+def default_parallelism(device: str | None) -> int:
+    """Starting batches per call for the resolved device."""
+    fixed = fixed_parallelism(device)
+    return fixed if fixed is not None else DEFAULT_PARALLEL
 
 
 def npu_properties(device: str) -> dict[str, Any]:
@@ -315,6 +322,68 @@ def _batches(lines: Sequence[str], batch_size: int) -> list[tuple[int, list[str]
     ]
 
 
+class ParallelTuner:
+    """Picks how many batches go into one generate() call on GPU/CPU.
+
+    Decode is memory-bandwidth bound: a larger batch reads the weights once for more
+    sequences, until compute or KV-cache pressure flattens the gain. The tuner climbs the
+    ladder (4 -> 8 -> 16) one full unit at a time, measuring lines per second, and settles on
+    the best level as soon as the next level is not at least ``min_gain`` faster. The first
+    unit is a warm-up (kernel compilation, caches) and is not measured.
+    """
+
+    def __init__(
+        self,
+        ladder: Sequence[int] = TUNE_LADDER,
+        fixed: int | None = None,
+        min_gain: float = TUNE_MIN_GAIN,
+    ) -> None:
+        self.ladder = [p for p in ladder if 1 <= p <= MAX_PARALLEL] or [DEFAULT_PARALLEL]
+        self.fixed = fixed
+        self.min_gain = min_gain
+        self.level = 0
+        self.warm = False
+        self.best: tuple[int, float] | None = None
+        self.settled = fixed is not None or len(self.ladder) == 1
+        self.samples: list[tuple[int, float]] = []  # (parallel, lines/s) for the audit log
+
+    @property
+    def parallel(self) -> int:
+        if self.fixed is not None:
+            return self.fixed
+        if self.settled and self.best is not None:
+            return self.best[0]
+        return self.ladder[self.level]
+
+    def observe(self, parallel: int, full_unit: bool, lines: int, seconds: float) -> None:
+        if self.settled or not full_unit or seconds <= 0 or lines <= 0:
+            return
+        if not self.warm:
+            self.warm = True
+            return
+        rate = lines / seconds
+        self.samples.append((parallel, round(rate, 3)))
+        if self.best is None or rate >= self.best[1] * (1 + self.min_gain):
+            self.best = (parallel, rate)
+            if self.level + 1 < len(self.ladder):
+                self.level += 1
+            else:
+                self.settled = True
+        else:
+            self.settled = True
+
+    def back_off(self, parallel: int) -> bool:
+        """A call at ``parallel`` failed (e.g. out of GPU memory): settle one level lower.
+        Returns False when there is nothing lower to fall back to."""
+        lower = [p for p in self.ladder if p < parallel]
+        if self.fixed is not None or not lower:
+            return False
+        self.samples.append((parallel, 0.0))
+        self.best = (lower[-1], self.best[1] if self.best else 0.0)
+        self.settled = True
+        return True
+
+
 def translate_lines(
     translator: LoadedTranslator,
     lines: Sequence[str],
@@ -323,198 +392,48 @@ def translate_lines(
     batch_size: int = DEFAULT_BATCH_SIZE,
     on_progress: ProgressSink | None = None,
     parallel: int | None = None,
+    clock: Callable[[], float] = time.perf_counter,
 ) -> TranslationResult:
+    """Translate ``lines``. ``parallel`` fixes the batches per call; ``None`` auto-tunes on
+    GPU/CPU (``LOCALSUB_TRANSLATION_PARALLEL`` also fixes it) and uses 1 on the NPU."""
     if source == target:
         return TranslationResult(tuple(lines), 0, 0)
-    started = time.perf_counter()
+    started = clock()
+    device = translator.device.resolved if translator.device else None
     if parallel is None:
-        parallel = default_parallelism(translator.device.resolved)
-    engine = _Engine(translator, source, target, parallel)
+        fixed = fixed_parallelism(device)
+        tuner = ParallelTuner(fixed=fixed)
+    else:
+        tuner = ParallelTuner(fixed=max(1, min(parallel, MAX_PARALLEL)))
+    engine = _Engine(translator, source, target, tuner.parallel)
     output: list[str] = []
     fallbacks = 0
     total = len(lines)
     batches = _batches(lines, batch_size)
-    for g in range(0, len(batches), engine.parallel):
-        values, missed = engine.unit([(b, c) for _, b, c in batches[g : g + engine.parallel]])
+    index = 0
+    while index < len(batches):
+        size = tuner.parallel
+        engine.parallel = size
+        unit = batches[index : index + size]
+        t0 = clock()
+        try:
+            values, missed = engine.unit([(b, c) for _, b, c in unit])
+        except LocalSubError:
+            if tuner.back_off(size):
+                continue  # retry the same batches with fewer per call
+            raise
+        done = sum(len(v) for v in values)
+        tuner.observe(size, len(unit) == size, done, clock() - t0)
         fallbacks += missed
         for v in values:
             output.extend(v)
+        index += len(unit)
         if on_progress:
             on_progress(len(output), total)
-    device = translator.device.resolved or "?"
     return TranslationResult(
         tuple(output),
         fallbacks,
-        int((time.perf_counter() - started) * 1000),
-        {device: total},
+        int((clock() - started) * 1000),
+        parallel=tuner.parallel,
+        tuning=tuple(tuner.samples),
     )
-
-
-# --- Hybrid GPU + NPU -------------------------------------------------------------------
-
-HYBRID = "HYBRID"
-HYBRID_DEVICES = ("GPU", "NPU")
-
-Loader = Callable[[], LoadedTranslator]
-LaneSink = Callable[[str, str, str | None], None]  # (device, "ready"|"failed", reason)
-
-
-@dataclass(frozen=True)
-class Lane:
-    device: str
-    loader: Loader
-
-
-def translate_lines_hybrid(
-    lanes: Sequence[Lane],
-    lines: Sequence[str],
-    source: str,
-    target: str,
-    batch_size: int = DEFAULT_BATCH_SIZE,
-    on_progress: ProgressSink | None = None,
-    on_lane: LaneSink | None = None,
-) -> tuple[TranslationResult, dict[str, LoadedTranslator | str]]:
-    """Translate on several devices at once with a shared work queue.
-
-    Each lane loads its own pipeline in a thread and then keeps pulling the next batches
-    (GPU: several per generate() call, NPU: one), so the faster device naturally does more
-    work and a slow NPU compile does not delay the GPU. OpenVINO releases the GIL while
-    generating. A lane that fails to load or generate returns its batches to the queue; the
-    job fails only when every lane has failed and work is left.
-    """
-    if source == target:
-        return TranslationResult(tuple(lines), 0, 0), {}
-    started = time.perf_counter()
-    total = len(lines)
-    queue: deque[tuple[int, list[str], list[str]]] = deque(_batches(lines, batch_size))
-    results: dict[int, list[str]] = {}
-    lock = threading.Lock()
-    state: dict[str, int] = {"done": 0, "fallbacks": 0}
-    per_device: dict[str, int] = {}
-    outcome: dict[str, LoadedTranslator | str] = {}
-    errors: list[Exception] = []
-
-    def work(lane: Lane) -> None:
-        try:
-            translator = lane.loader()
-        except Exception as exc:  # noqa: BLE001 - a lane failing must not kill the job
-            with lock:
-                outcome[lane.device] = f"{lane.device}: {exc}"[:240]
-            if on_lane:
-                on_lane(lane.device, "failed", str(outcome[lane.device]))
-            return
-        with lock:
-            outcome[lane.device] = translator
-        if on_lane:
-            on_lane(lane.device, "ready", None)
-        engine = _Engine(translator, source, target, default_parallelism(lane.device))
-        while True:
-            with lock:
-                if not queue:
-                    return
-                taken = [queue.popleft() for _ in range(min(engine.parallel, len(queue)))]
-            try:
-                values, missed = engine.unit([(b, c) for _, b, c in taken])
-            except Exception as exc:  # noqa: BLE001
-                with lock:
-                    queue.extendleft(reversed(taken))  # another lane picks them up
-                    errors.append(exc)
-                    outcome[lane.device] = f"{lane.device}: {exc}"[:240]
-                if on_lane:
-                    on_lane(lane.device, "failed", str(outcome[lane.device]))
-                return
-            with lock:
-                for (offset, _, _), v in zip(taken, values, strict=True):
-                    results[offset] = v
-                done_lines = sum(len(v) for v in values)
-                state["done"] += done_lines
-                state["fallbacks"] += missed
-                per_device[lane.device] = per_device.get(lane.device, 0) + done_lines
-                if on_progress:
-                    on_progress(state["done"], total)
-
-    threads = [
-        threading.Thread(target=work, args=(lane,), name=f"translate-{lane.device}", daemon=True)
-        for lane in lanes
-    ]
-    for t in threads:
-        t.start()
-    for t in threads:
-        t.join()
-
-    if sum(len(v) for v in results.values()) < total:
-        if errors and isinstance(errors[-1], LocalSubError):
-            raise errors[-1]
-        reasons = "; ".join(str(v) for v in outcome.values() if isinstance(v, str))
-        raise LocalSubError(
-            ErrorCode.TRANSLATION_FAILED, f"No translation device could run: {reasons}"[:300]
-        )
-    output: list[str] = []
-    for offset in sorted(results):
-        output.extend(results[offset])
-    return (
-        TranslationResult(
-            tuple(output),
-            state["fallbacks"],
-            int((time.perf_counter() - started) * 1000),
-            per_device,
-        ),
-        outcome,
-    )
-
-
-def model_size_bytes(path: Path) -> int:
-    try:
-        return sum(f.stat().st_size for f in path.rglob("*") if f.is_file())
-    except OSError:
-        return 0
-
-
-def available_memory_bytes() -> int | None:
-    """Free physical memory (GPU and NPU share system RAM on Intel Core Ultra)."""
-    try:
-        if os.name == "nt":
-            import ctypes
-
-            class _Status(ctypes.Structure):
-                _fields_ = [
-                    ("dwLength", ctypes.c_ulong),
-                    ("dwMemoryLoad", ctypes.c_ulong),
-                    ("ullTotalPhys", ctypes.c_ulonglong),
-                    ("ullAvailPhys", ctypes.c_ulonglong),
-                    ("ullTotalPageFile", ctypes.c_ulonglong),
-                    ("ullAvailPageFile", ctypes.c_ulonglong),
-                    ("ullTotalVirtual", ctypes.c_ulonglong),
-                    ("ullAvailVirtual", ctypes.c_ulonglong),
-                    ("ullAvailExtendedVirtual", ctypes.c_ulonglong),
-                ]
-
-            status = _Status()
-            status.dwLength = ctypes.sizeof(_Status)
-            if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):  # type: ignore[attr-defined]
-                return int(status.ullAvailPhys)
-            return None
-        return int(os.sysconf("SC_AVPHYS_PAGES") * os.sysconf("SC_PAGE_SIZE"))
-    except (OSError, ValueError, AttributeError):
-        return None
-
-
-def hybrid_plan(
-    available_devices: Sequence[str], model_bytes: int, free_bytes: int | None
-) -> tuple[list[str], str | None]:
-    """Devices to use for HYBRID and why a device was left out (None when both run).
-
-    A second copy of the model needs roughly its size again plus working memory, so the NPU
-    lane is dropped when free RAM is below 2.5x the model size.
-    """
-    present = {d.upper().split(".")[0] for d in available_devices}
-    devices = [d for d in HYBRID_DEVICES if d in present]
-    if len(devices) < 2:
-        missing = ", ".join(d for d in HYBRID_DEVICES if d not in present)
-        return devices or ["CPU"], f"hybrid: {missing} not available"
-    if free_bytes is not None and model_bytes and free_bytes < 2.5 * model_bytes:
-        return ["GPU"], (
-            f"hybrid: only {free_bytes / 2**30:.1f} GB RAM free, "
-            f"need ~{2.5 * model_bytes / 2**30:.1f} GB for two model copies"
-        )
-    return devices, None

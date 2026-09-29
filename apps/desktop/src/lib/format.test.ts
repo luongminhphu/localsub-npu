@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatBytes, formatDuration, formatLocal, estimateRemainingMs, isStale, splitText, offsetLabel, percent } from "./format";
+import { formatBytes, formatDuration, formatLocal, estimateRemainingMs, isStale, parallelText, offsetLabel, percent } from "./format";
 
 describe("format", () => {
   it("formats byte sizes", () => {
@@ -54,11 +54,11 @@ describe("estimateRemainingMs", () => {
   });
 });
 
-describe("splitText", () => {
-  it("shows the per-device split only for hybrid runs", () => {
-    expect(splitText({ GPU: 900, NPU: 300 })).toBe(" · GPU 900 · NPU 300");
-    expect(splitText({ GPU: 900 })).toBe("");
-    expect(splitText({ GPU: 900, NPU: 0 })).toBe("");
-    expect(splitText(null)).toBe("");
+describe("parallelText", () => {
+  it("shows the tuned batch level only when batching was used", () => {
+    expect(parallelText(8)).toBe("×8");
+    expect(parallelText(1)).toBe("");
+    expect(parallelText(null)).toBe("");
+    expect(parallelText(undefined)).toBe("");
   });
 });

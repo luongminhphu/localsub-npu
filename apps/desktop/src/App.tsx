@@ -62,10 +62,7 @@ const DEVICES: Array<{ value: DevicePreference; label: string }> = [
   { value: "GPU", label: "GPU" },
   { value: "CPU", label: "CPU" },
 ];
-const TRANSLATION_DEVICES: Array<{ value: TranslationDevice; label: string }> = [
-  ...DEVICES,
-  { value: "HYBRID", label: "device.hybrid" },
-];
+const TRANSLATION_DEVICES: Array<{ value: TranslationDevice; label: string }> = DEVICES;
 type Tab = "editor" | "monitor" | "history" | "models";
 const TABS: Tab[] = ["editor", "monitor", "history", "models"];
 const JA_WEAK_MODELS = new Set(["whisper-tiny-int8", "whisper-base-int8", "whisper-small-int8"]);
@@ -367,7 +364,6 @@ export function App() {
               </div>
               <p className="help-text">
                 {t(`hint.${translationModel}` as MessageKey)}
-                {translationDevice === "HYBRID" ? ` ${t("config.hybridHint")}` : ""}
               </p>
             </div>
           )}
