@@ -7,7 +7,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
-from app import history, model_store, translation, whisper
+from app import history, model_store, power, translation, whisper
 from app.audit import to_jsonable
 from app.config import Settings, load_env_file
 from app.diagnostics import build_diagnostic_report
@@ -79,6 +79,14 @@ def build_parser() -> argparse.ArgumentParser:
     tr.add_argument("--formats", type=_formats, default=("srt",), help="e.g. srt,vtt,txt,json")
     tr.add_argument("--output", type=Path, help="Output .srt path for the source track")
     tr.add_argument("--events", action="store_true", help="Stream JSON Lines events to stdout")
+    tr.add_argument(
+        "--allow-sleep",
+        action="store_true",
+        help="Let Windows sleep / throttle the worker while the job runs (default: keep awake)",
+    )
+    tr.add_argument(
+        "--keep-display-on", action="store_true", help="Also keep the screen on during the job"
+    )
 
     tl = sub.add_parser("translate", help="Translate an existing SRT file with the local LLM")
     tl.add_argument("source", type=Path)
@@ -142,6 +150,9 @@ def _cmd_transcribe(args: argparse.Namespace, settings: Settings) -> int:
             translation_model=args.translation_model,
             translation_device=args.translation_device,
             formats=args.formats,
+            keep_awake=not args.allow_sleep and power.env_flag("LOCALSUB_KEEP_AWAKE", True),
+            keep_display_on=args.keep_display_on
+            or power.env_flag("LOCALSUB_KEEP_DISPLAY_ON", False),
         ),
         emit=_event_printer(args.events),
     )

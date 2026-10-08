@@ -100,6 +100,7 @@ async function tauriBridge(): Promise<WorkerBridge> {
             translationModel: config.translateTo ? config.translationModel : null,
             translationDevice: config.translateTo ? config.translationDevice : null,
             formats: config.formats,
+            keepAwake: config.keepAwake,
           },
         });
       } catch (err) {
@@ -165,18 +166,24 @@ const PREVIEW_CUES = [
   ["We will review the portfolio risk limits after the break.", "Chúng ta sẽ rà soát hạn mức rủi ro danh mục sau giờ nghỉ."],
 ] as const;
 
-const PREVIEW_MODELS: Array<[string, "asr" | "translation", number]> = [
-  ["whisper-tiny-int8", "asr", 70],
-  ["whisper-base-int8", "asr", 120],
-  ["whisper-small-int8", "asr", 250],
-  ["whisper-medium-int8", "asr", 800],
-  ["whisper-large-v3-turbo-int8", "asr", 850],
-  ["whisper-large-v3-int8", "asr", 1600],
-  ["qwen3-8b-int4-cw", "translation", 5000],
-  ["qwen2.5-7b-instruct-int4", "translation", 4500],
-  ["qwen3-4b-int4", "translation", 2300],
-  ["qwen2.5-1.5b-instruct-int4", "translation", 1000],
-  ["qwen3-0.6b-int4", "translation", 500],
+type PreviewModel = [string, "asr" | "translation", number, string, Partial<ModelInfo>?];
+const EXPERIMENTAL_GPU_CPU: Partial<ModelInfo> = { runtime: "vlm", devices: ["GPU", "CPU"], experimental: true };
+const PREVIEW_MODELS: PreviewModel[] = [
+  ["whisper-small-int8", "asr", 250, "Whisper small"],
+  ["whisper-base-int8", "asr", 120, "Whisper base"],
+  ["whisper-tiny-int8", "asr", 70, "Whisper tiny"],
+  ["whisper-medium-int8", "asr", 800, "Whisper medium"],
+  ["whisper-large-v3-turbo-int8", "asr", 850, "Whisper large-v3 turbo"],
+  ["whisper-large-v3-int8", "asr", 1600, "Whisper large-v3"],
+  ["distil-whisper-large-v3-int8", "asr", 780, "Distil-Whisper large-v3 (EN)", { languages: ["en"], experimental: true, hint: { vi: "Chỉ tiếng Anh: gần bằng large-v3 nhưng nhanh hơn nhiều (2 lớp decoder).", en: "English only: close to large-v3 accuracy, much faster (2 decoder layers)." } }],
+  ["qwen3-8b-int4-cw", "translation", 5000, "Qwen3 8B"],
+  ["qwen2.5-7b-instruct-int4", "translation", 4500, "Qwen2.5 7B"],
+  ["qwen3-4b-int4", "translation", 2300, "Qwen3 4B"],
+  ["qwen2.5-1.5b-instruct-int4", "translation", 1000, "Qwen2.5 1.5B"],
+  ["qwen3-0.6b-int4", "translation", 500, "Qwen3 0.6B"],
+  ["qwen3.5-9b-int4", "translation", 6300, "Qwen3.5 9B", { ...EXPERIMENTAL_GPU_CPU, hint: { vi: "Thế hệ mới (09/2026), đa ngôn ngữ tốt hơn; GPU/CPU. Thử nghiệm: đo tốc độ trước.", en: "Newer generation (09/2026), stronger multilingual; GPU/CPU. Experimental: benchmark." } }],
+  ["qwen3.5-4b-int4", "translation", 3600, "Qwen3.5 4B", { ...EXPERIMENTAL_GPU_CPU, hint: { vi: "Thế hệ mới, cân bằng; GPU/CPU. Thử nghiệm: đo tốc độ trước.", en: "Newer generation, balanced; GPU/CPU. Experimental: benchmark first." } }],
+  ["qwen3.5-2b-int4", "translation", 2100, "Qwen3.5 2B", { ...EXPERIMENTAL_GPU_CPU, hint: { vi: "Thế hệ mới, nhẹ; GPU/CPU. Thử nghiệm: đo tốc độ trước.", en: "Newer generation, light; GPU/CPU. Experimental: benchmark first." } }],
 ];
 
 function previewHistory(): JobHistory {
@@ -215,7 +222,11 @@ function previewBridge(): WorkerBridge {
       installed_models: [...installed],
     }),
     models: async () =>
-      PREVIEW_MODELS.map(([id, kind, mb]) => ({
+      PREVIEW_MODELS.map(([id, kind, mb, label, extra]) => ({
+        label,
+        devices: ["NPU", "GPU", "CPU"],
+        languages: null,
+        ...extra,
         id,
         kind,
         source: `OpenVINO/${id}`,
@@ -233,6 +244,7 @@ function previewBridge(): WorkerBridge {
       exitHandler = handlers.onExit;
       const withTranslation = Boolean(config.translateTo);
       const steps: WorkerEvent[] = [
+        { type: "power", keep_awake: config.keepAwake, display_on: false, throttling_disabled: config.keepAwake, reason: config.keepAwake ? null : "disabled" },
         { type: "state", state: "probing" },
         { type: "state", state: "extracting_audio" },
         { type: "state", state: "loading_model", model_id: config.model },

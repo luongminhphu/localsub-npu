@@ -73,6 +73,9 @@ pub struct JobArgs {
     pub translation_model: Option<String>,
     pub translation_device: Option<String>,
     pub formats: Vec<String>,
+    /// `false` lets Windows sleep / throttle the worker during the job (default: keep awake).
+    #[serde(default)]
+    pub keep_awake: Option<bool>,
 }
 
 fn venv_python(worker_dir: &Path) -> PathBuf {
@@ -288,6 +291,9 @@ pub fn transcribe_args(job: &JobArgs) -> Result<Vec<String>, String> {
             args.extend(["--translation-device".into(), d.to_string()]);
         }
     }
+    if job.keep_awake == Some(false) {
+        args.push("--allow-sleep".into());
+    }
     Ok(args)
 }
 
@@ -306,6 +312,7 @@ mod tests {
             translation_model: Some("qwen3-8b-int4-cw".into()),
             translation_device: None,
             formats: vec!["srt".into(), "vtt".into()],
+            keep_awake: None,
         }
     }
 
@@ -461,5 +468,23 @@ mod tests {
         );
         let text = String::from_utf8_lossy(&out.stdout);
         assert!(text.contains("whisper-small-int8") && text.contains("qwen3-8b-int4-cw"));
+    }
+
+    #[test]
+    fn keep_awake_is_default_and_can_be_turned_off() {
+        let src = std::env::temp_dir().join("localsub-keep-awake.mp4");
+        std::fs::write(&src, b"x").unwrap();
+        let mut j = job(src.to_str().unwrap());
+        assert!(!transcribe_args(&j)
+            .unwrap()
+            .contains(&"--allow-sleep".to_string()));
+        j.keep_awake = Some(true);
+        assert!(!transcribe_args(&j)
+            .unwrap()
+            .contains(&"--allow-sleep".to_string()));
+        j.keep_awake = Some(false);
+        assert!(transcribe_args(&j)
+            .unwrap()
+            .contains(&"--allow-sleep".to_string()));
     }
 }

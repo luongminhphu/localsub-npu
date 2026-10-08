@@ -6,20 +6,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from app import catalog
 from app.devices import compile_with_fallback, ensure_ir_present
 from app.errors import ErrorCode, LocalSubError
 from app.models import DeviceResolution
 from app.segmentation import TimedText
 
-# Pre-converted OpenVINO IR models published by Intel on Hugging Face.
-MODEL_CATALOG: dict[str, str] = {
-    "whisper-tiny-int8": "OpenVINO/whisper-tiny-int8-ov",
-    "whisper-base-int8": "OpenVINO/whisper-base-int8-ov",
-    "whisper-small-int8": "OpenVINO/whisper-small-int8-ov",
-    "whisper-medium-int8": "OpenVINO/whisper-medium-int8-ov",
-    "whisper-large-v3-turbo-int8": "OpenVINO/whisper-large-v3-turbo-int8-ov",
-    "whisper-large-v3-int8": "OpenVINO/whisper-large-v3-int8-ov",
-}
+# Pre-converted OpenVINO IR models published by Intel on Hugging Face (shared catalog).
+MODEL_CATALOG: dict[str, str] = {m: s.repo for m, s in catalog.of_kind("asr").items()}
 DEFAULT_MODEL = "whisper-small-int8"
 LANGUAGES = {"auto", "en", "ja", "vi"}
 TASKS = {"transcribe", "translate"}
@@ -58,6 +52,20 @@ def model_path_for(model_dir: Path, model_id: str) -> Path:
             ErrorCode.MODEL_NOT_FOUND, f"Unknown model '{model_id}'. Known: {known}"
         )
     return model_dir / model_id
+
+
+def check_language_support(model_id: str, language: str, task: str) -> None:
+    """Single-language models (Distil-Whisper EN) need that language set explicitly: they
+    cannot detect languages or translate, and would emit garbage for ja/vi audio."""
+    spec = catalog.spec(model_id)
+    if spec is None or not spec.languages:
+        return
+    if language not in spec.languages or task != "transcribe":
+        raise LocalSubError(
+            ErrorCode.INPUT_UNSUPPORTED,
+            f"{spec.label} only transcribes {', '.join(spec.languages)}: set the language to "
+            f"{spec.languages[0]} and the task to transcribe, or pick a multilingual model.",
+        )
 
 
 def ensure_model_present(path: Path, model_id: str) -> Path:

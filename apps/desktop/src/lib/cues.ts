@@ -148,6 +148,7 @@ export const initialJob: JobView = {
   summary: null,
   project: null,
   logs: [],
+  power: null,
 };
 
 export type JobAction =
@@ -198,6 +199,17 @@ function applyEvent(state: JobView, e: WorkerEvent): JobView {
     return next;
   }
   if (e.type === "summary") return { ...state, summary: e.summary ?? null };
+  if (e.type === "power") {
+    return {
+      ...state,
+      power: {
+        keep_awake: Boolean(e.keep_awake),
+        display_on: Boolean(e.display_on),
+        throttling_disabled: Boolean(e.throttling_disabled),
+        reason: e.reason ?? null,
+      },
+    };
+  }
   if (e.type === "error") {
     return { ...state, status: "failed", error: `${e.error_code}: ${e.error_message}` };
   }

@@ -40,10 +40,24 @@ export interface JobConfig {
   translationModel: string;
   translationDevice: TranslationDevice;
   formats: ExportFormat[];
+  /** Hold off Windows idle sleep and power throttling while the job runs (default on). */
+  keepAwake: boolean;
+}
+
+/** Keep-awake state the worker applied for the job (`power` event). */
+export interface PowerState {
+  keep_awake: boolean;
+  display_on: boolean;
+  throttling_disabled: boolean;
+  reason: string | null;
 }
 
 export interface WorkerEvent {
-  type: "state" | "progress" | "summary" | "error" | "warning";
+  type: "state" | "progress" | "summary" | "error" | "warning" | "power";
+  keep_awake?: boolean;
+  display_on?: boolean;
+  throttling_disabled?: boolean;
+  reason?: string | null;
   state?: WorkerStage;
   stage?: string;
   done?: number;
@@ -78,6 +92,7 @@ export interface JobView {
   summary: Record<string, unknown> | null;
   project: LocalSubProject | null;
   logs: string[];
+  power: PowerState | null;
 }
 
 export interface Diagnostics {
@@ -107,6 +122,13 @@ export interface ModelInfo {
   size_bytes: number;
   approx_size_mb: number | null;
   path: string;
+  /** Catalog metadata (worker 0.9+). */
+  label?: string;
+  runtime?: "whisper" | "llm" | "vlm";
+  hint?: { vi: string; en: string };
+  devices?: string[];
+  languages?: string[] | null;
+  experimental?: boolean;
 }
 
 /** JSON Lines emitted by `models download --events`. */
