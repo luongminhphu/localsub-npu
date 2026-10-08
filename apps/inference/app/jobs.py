@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 import gc
 import os
 import threading
@@ -62,6 +63,8 @@ class JobRecord:
     power: dict[str, Any] | None = None  # keep-awake / throttling state applied for the job
     overlap: bool | None = None  # translation ran while Whisper was still transcribing
     overlap_reason: str | None = None
+    # NPU/GPU driver resets survived during speech recognition: at_ms, from, to, error.
+    asr_recoveries: list[dict[str, Any]] = field(default_factory=list)
     translation_overlap_lines: int | None = None  # lines translated by the overlapping thread
     translation_tuning: list[list[float]] | None = None  # [[parallel, lines/s], ...]
     openvino_version: str | None = None
@@ -157,6 +160,78 @@ def _load_translator(
     record.translation_device = translator.device
     record.timings_ms["load_translation_model"] = translator.load_ms
     return translator
+
+
+RECOVERY_DELAY_S = 2.0  # let the driver finish its reset before reloading
+
+
+def _recover_asr(
+    settings: Settings,
+    request: JobRequest,
+    record: JobRecord,
+    failed: whisper.LoadedModel,
+    at_ms: int,
+    available: tuple[str, ...],
+    overlapping: bool,
+    send: EventSink,
+    pipeline_factory: whisper.PipelineFactory | None,
+) -> whisper.LoadedModel | None:
+    """Reload Whisper after its device was lost and return the new model (or None).
+
+    First the same device is reloaded (an NPU reset is often transient). With ``auto``,
+    the other devices follow: CPU first while the translator holds the GPU, else GPU then
+    CPU. An explicit device never moves, matching the no-silent-fallback rule."""
+    lost = failed.device.resolved or "?"
+    previous = [r["to"] for r in record.asr_recoveries]
+    order = [lost]
+    if settings.device_preference == "auto":
+        others = ["CPU", "GPU"] if overlapping else ["GPU", "CPU"]
+        order += [d for d in others if d != lost]
+    # Each recovery moves one step down the list (the same device is retried only once).
+    tried = {d: previous.count(d) for d in order}
+    stamp = f"{at_ms // 60000:02d}:{at_ms // 1000 % 60:02d}"
+    time.sleep(RECOVERY_DELAY_S)
+    gc.collect()
+    load_kwargs = {"factory": pipeline_factory} if pipeline_factory else {}
+    for device in order:
+        if device not in available or tried.get(device, 0) >= 1:
+            continue
+        tried[device] = tried.get(device, 0) + 1
+        try:
+            model = whisper.load_model(
+                failed.model_path,
+                request.model_id,
+                device,
+                [device],
+                available,
+                cache_dir=settings.model_dir / ".ov-cache",
+                **load_kwargs,
+            )
+        except LocalSubError as exc:
+            record.asr_recoveries.append(
+                {"at_ms": at_ms, "from": lost, "to": device, "ok": False, "error": exc.code}
+            )
+            continue
+        reason = f"{lost} device lost at {stamp}; continued on {device}"
+        record.asr_recoveries.append({"at_ms": at_ms, "from": lost, "to": device, "ok": True})
+        record.device = DeviceResolution(
+            requested=settings.device_preference,
+            resolved=device,
+            available_devices=available,
+            fallback_reason=reason,
+        )
+        model = dataclasses.replace(model, device=record.device)
+        send({"type": "warning", "message": reason})
+        send(
+            {
+                "type": "device",
+                "stage": "transcribing",
+                "device": device,
+                "fallback_reason": reason,
+            }
+        )
+        return model
+    return None
 
 
 def _device_event(translator: translation.LoadedTranslator, done: int, total: int) -> dict:
@@ -468,6 +543,20 @@ def _run_job(
                 "total": record.source_duration_ms or 0,
             }
         )
+
+        def recover(failed: whisper.LoadedModel, at_ms: int) -> whisper.LoadedModel | None:
+            return _recover_asr(
+                settings,
+                request,
+                record,
+                failed,
+                at_ms,
+                available,
+                overlap is not None,
+                send,
+                pipeline_factory,
+            )
+
         try:
             result = whisper.transcribe(
                 model,
@@ -478,6 +567,7 @@ def _run_job(
                     {"type": "progress", "stage": "transcribing", "done": done, "total": total}
                 ),
                 on_chunk=on_chunk,
+                recover=recover,
             )
         except BaseException:
             if overlap is not None:
@@ -488,6 +578,11 @@ def _run_job(
         record.detected_language = result.detected_language
         if record.source_duration_ms:
             record.real_time_factor = round(result.inference_ms / record.source_duration_ms, 4)
+        # Drop every reference to the Whisper pipeline(s) before the translator needs memory.
+        record.device = result.model.device if result.model else record.device
+        result = whisper.TranscriptionResult(
+            result.segments, result.detected_language, result.inference_ms
+        )
         del model, samples
         gc.collect()
 

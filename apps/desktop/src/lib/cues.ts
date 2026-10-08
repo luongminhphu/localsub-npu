@@ -199,6 +199,14 @@ function applyEvent(state: JobView, e: WorkerEvent): JobView {
     return next;
   }
   if (e.type === "summary") return { ...state, summary: e.summary ?? null };
+  if (e.type === "device") {
+    // Speech recognition moved (or reloaded) after the NPU/GPU driver was reset.
+    return {
+      ...state,
+      asrDevice: e.device ?? state.asrDevice,
+      asrFallback: e.fallback_reason ?? state.asrFallback,
+    };
+  }
   if (e.type === "power") {
     return {
       ...state,

@@ -8,13 +8,13 @@
 - Sửa phụ đề trực tiếp trong bảng, xuất **SRT, VTT, TXT** và file dự án `.localsub.json`.
 - Media không bao giờ rời khỏi máy. Sau khi tải model lần đầu, không cần Internet và không cần API key.
 
-> Phiên bản hiện tại: **0.9.0 (Wave 7: giữ máy thức và chạy tốc độ tối đa khi xử lý, danh mục model dùng chung, thêm Qwen3.5 và Distil-Whisper)**. Có **bộ cài Windows** (không cần Python/Node/Rust) — xem
+> Phiên bản hiện tại: **0.9.1 (tự phục hồi khi driver NPU bị reset giữa chừng) · 0.9.0 (Wave 7: giữ máy thức và chạy tốc độ tối đa khi xử lý, danh mục model dùng chung, thêm Qwen3.5 và Distil-Whisper)**. Có **bộ cài Windows** (không cần Python/Node/Rust) — xem
 > [Cài nhanh bằng bộ cài](#cài-nhanh-bằng-bộ-cài). Muốn phát triển hoặc chạy dòng lệnh thì cài từ mã nguồn (mục 2–6).
 
 ## Cài nhanh bằng bộ cài
 
 1. Cài FFmpeg (một lần): `winget install --id Gyan.FFmpeg -e`, rồi đăng xuất/đăng nhập lại để PATH có hiệu lực.
-2. Tải file `LocalSub.NPU_0.9.0_x64-setup.exe` ở trang
+2. Tải file `LocalSub.NPU_0.9.1_x64-setup.exe` ở trang
    [Releases](https://github.com/luongminhphu/localsub-npu/releases) (hoặc artifact
    `localsub-npu-windows-installer` của workflow **Release** trong tab Actions).
 3. Chạy bộ cài. Bộ cài **chưa được ký số**, nên Windows SmartScreen có thể hiện "Windows protected your PC":
@@ -208,7 +208,7 @@ Tự đóng gói bộ cài (giống workflow Release trên GitHub):
 .\scripts\build-worker.ps1          # đóng băng worker bằng PyInstaller -> apps\inference\dist\localsub-worker\ + smoke test
 cd apps\desktop
 npx tauri build --bundles nsis --config src-tauri/tauri.bundle.conf.json
-# kết quả: apps\desktop\src-tauri\target\release\bundle\nsis\LocalSub.NPU_0.9.0_x64-setup.exe
+# kết quả: apps\desktop\src-tauri\target\release\bundle\nsis\LocalSub.NPU_0.9.1_x64-setup.exe
 ```
 
 `tauri.bundle.conf.json` chỉ dùng khi build bộ cài (thêm thư mục worker vào gói); `npm run tauri dev` không cần nó.
@@ -553,6 +553,7 @@ Cách đọc: nếu ở bước Dịch mà GPU thấp và CPU cao, model dịch 
 | `OPENVINO_UNAVAILABLE` | Chạy lại `.\scripts\setup-wave2.ps1` |
 | Không thấy `NPU` trong diagnostics | Cập nhật Intel NPU driver, khởi động lại, kiểm tra Task Manager có NPU 0 |
 | Task Manager có NPU 0 nhưng OpenVINO chỉ thấy `CPU, GPU` | Chạy lại với `$env:ZE_ENABLE_LOADER_DEBUG_TRACE="1"; $env:OV_NPU_LOG_LEVEL="LOG_DEBUG"`. Nếu log báo `npu_level_zero_umd.dll ... could not be found` (đường dẫn tới thư mục driver đã bị xóa): khởi động lại máy (Restart, không phải Shut down), rồi `pnputil /restart-device <InstanceId>` bằng quyền Admin, cuối cùng cài lại driver Intel NPU |
+| `ZE_RESULT_ERROR_DEVICE_LOST` / `DEVICE_LOST` khi đang nhận dạng | Driver NPU bị reset giữa chừng. Từ 0.9.1 app tự nạp lại Whisper trên NPU và **chạy tiếp từ đoạn 5 phút bị lỗi** (giữ các đoạn đã xong). Nếu lỗi lặp lại và thiết bị là **Tự động**, app chuyển sang GPU (hoặc CPU khi GPU đang dịch chạy chồng); thời điểm và thiết bị mới hiện ở *Môi trường chạy* và ghi trong `asr_recoveries` của `jobs.jsonl`. Nếu đã chọn cố định NPU, app chỉ thử lại trên NPU một lần rồi báo `DEVICE_LOST`. Lỗi lặp lại thường do driver: cập nhật driver Intel NPU mới nhất, khởi động lại (Restart) |
 | `DEVICE_UNAVAILABLE` khi chọn NPU | Dùng `-Device auto` để xem lý do chuyển thiết bị trong kết quả |
 | Lần đầu chạy NPU rất lâu | Bình thường (biên dịch model). Không xóa `data\models\.ov-cache` |
 | `MODEL_NOT_FOUND` / app hiện "Cần tải model trước" | Tải model trong mục **Model** (hoặc `models download <id>`) |
