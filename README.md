@@ -8,13 +8,13 @@
 - Sửa phụ đề trực tiếp trong bảng, xuất **SRT, VTT, TXT** và file dự án `.localsub.json`.
 - Media không bao giờ rời khỏi máy. Sau khi tải model lần đầu, không cần Internet và không cần API key.
 
-> Phiên bản hiện tại: **0.8.0 (Wave 6: nhận dạng trên NPU chạy chồng với dịch trên GPU, GPU tự điều chỉnh số lô dịch, bỏ chế độ GPU+NPU)**. Có **bộ cài Windows** (không cần Python/Node/Rust) — xem
+> Phiên bản hiện tại: **0.9.0 (Wave 7: giữ máy thức và chạy tốc độ tối đa khi xử lý, danh mục model dùng chung, thêm Qwen3.5 và Distil-Whisper)**. Có **bộ cài Windows** (không cần Python/Node/Rust) — xem
 > [Cài nhanh bằng bộ cài](#cài-nhanh-bằng-bộ-cài). Muốn phát triển hoặc chạy dòng lệnh thì cài từ mã nguồn (mục 2–6).
 
 ## Cài nhanh bằng bộ cài
 
 1. Cài FFmpeg (một lần): `winget install --id Gyan.FFmpeg -e`, rồi đăng xuất/đăng nhập lại để PATH có hiệu lực.
-2. Tải file `LocalSub.NPU_0.8.0_x64-setup.exe` ở trang
+2. Tải file `LocalSub.NPU_0.9.0_x64-setup.exe` ở trang
    [Releases](https://github.com/luongminhphu/localsub-npu/releases) (hoặc artifact
    `localsub-npu-windows-installer` của workflow **Release** trong tab Actions).
 3. Chạy bộ cài. Bộ cài **chưa được ký số**, nên Windows SmartScreen có thể hiện "Windows protected your PC":
@@ -208,7 +208,7 @@ Tự đóng gói bộ cài (giống workflow Release trên GitHub):
 .\scripts\build-worker.ps1          # đóng băng worker bằng PyInstaller -> apps\inference\dist\localsub-worker\ + smoke test
 cd apps\desktop
 npx tauri build --bundles nsis --config src-tauri/tauri.bundle.conf.json
-# kết quả: apps\desktop\src-tauri\target\release\bundle\nsis\LocalSub.NPU_0.8.0_x64-setup.exe
+# kết quả: apps\desktop\src-tauri\target\release\bundle\nsis\LocalSub.NPU_0.9.0_x64-setup.exe
 ```
 
 `tauri.bundle.conf.json` chỉ dùng khi build bộ cài (thêm thư mục worker vào gói); `npm run tauri dev` không cần nó.
@@ -392,6 +392,7 @@ số câu dịch lỗi (`translation_fallback_lines`) và mã lỗi — **không
 | `whisper-medium-int8` | Tiếng Việt tốt hơn, chậm hơn |
 | `whisper-large-v3-turbo-int8` | Chất lượng/tốc độ tốt nhất cho tiếng Việt và **tiếng Nhật**; thử cả GPU và NPU |
 | `whisper-large-v3-int8` | Chất lượng cao nhất, chậm nhất |
+| `distil-whisper-large-v3-int8` (0.9.0, thử nghiệm) | **Chỉ tiếng Anh**: gần bằng large-v3, decoder 2 lớp nên nhanh hơn nhiều. Phải chọn ngôn ngữ nói = Tiếng Anh; app chặn khi chọn Tự nhận diện, tiếng Nhật hoặc tiếng Việt |
 
 ### Dịch (LLM)
 
@@ -402,6 +403,13 @@ số câu dịch lỗi (`translation_fallback_lines`) và mã lỗi — **không
 | `qwen3-4b-int4` | ~2.5 GB | Máy ít RAM |
 | `qwen2.5-1.5b-instruct-int4` | ~1 GB | Bản nháp nhanh, cần soát kỹ |
 | `qwen3-0.6b-int4` | ~0.5 GB | Chỉ để kiểm tra luồng chạy; chất lượng dịch kém |
+| `qwen3.5-9b-int4` (0.9.0, thử nghiệm) | ~6.3 GB | Thế hệ Qwen3.5 (09/2026), đa ngôn ngữ tốt hơn. Chỉ GPU/CPU |
+| `qwen3.5-4b-int4` (0.9.0, thử nghiệm) | ~3.6 GB | Qwen3.5 cân bằng. Chỉ GPU/CPU |
+| `qwen3.5-2b-int4` (0.9.0, thử nghiệm) | ~2.1 GB | Qwen3.5 nhẹ. Chỉ GPU/CPU |
+
+**Về Qwen3.5 (thử nghiệm):** Intel chỉ phát hành Qwen3.5 dạng model ảnh + chữ (VLM). App chỉ nạp phần ngôn ngữ qua `ContinuousBatchingPipeline` (không chạy phần xử lý ảnh), vẫn dịch nhiều lô một lần như Qwen3. Cần OpenVINO GenAI 2026.4 trở lên; chưa hỗ trợ NPU. Đo trong sandbox CPU với 79 câu (bản 0.8B, chỉ để so sánh tương đối): dịch đúng tiếng Việt ở các câu mà Qwen3 0.6B để nguyên tiếng Anh, nhưng **chậm hơn** (124 s so với 46 s của Qwen3 0.6B, 127 s của Qwen3 1.7B). Chưa đo trên GPU Arc: hãy chạy thử một video ngắn và so cột RTF tổng trong Lịch sử trước khi dùng thay Qwen3 8B.
+
+**Thêm model mới:** toàn bộ model nằm trong một danh mục `apps/inference/app/catalog.py` (id, repo Hugging Face, dung lượng, cách nạp `whisper`/`llm`/`vlm`, thiết bị chạy được, ngôn ngữ, gợi ý tiếng Việt/Anh). Worker, lệnh `models list` và giao diện đều đọc từ đây, nên thêm một model OpenVINO đã chuyển đổi sẵn chỉ cần thêm một mục, không phải sửa giao diện hay Rust.
 
 ### Tiếng Nhật
 
@@ -467,6 +475,34 @@ Khi sinh chữ, LLM bị giới hạn bởi **băng thông RAM**: mỗi bước 
 
 **Vì sao bỏ chế độ GPU+NPU (có ở 0.7.0):** GPU và NPU dùng chung RAM LPDDR5X; mỗi thiết bị giữ một bản model và cùng tranh băng thông. Đo thực tế với video 2h28m: chỉ GPU dịch mất 32m50s, GPU+NPU mất 38m22s (chậm hơn ~17%) và tốn thêm RAM cho bản model thứ hai. Job cũ vẫn hiện đúng trong Lịch sử; dòng lệnh `--translation-device HYBRID` giờ bị từ chối.
 
+### Giữ máy thức khi xử lý (0.9.0)
+
+Trước 0.9.0, Windows có thể cho máy **sleep** khi không có thao tác chuột/bàn phím, hoặc chuyển worker sang chế độ tiết kiệm (EcoQoS, chạy trên lõi tiết kiệm điện) khi cửa sổ app bị thu nhỏ, làm job dài chạy rất chậm hoặc dừng giữa chừng.
+
+Từ 0.9.0, trong suốt job worker:
+
+| Cơ chế | Tác dụng |
+|---|---|
+| `SetThreadExecutionState(ES_CONTINUOUS \| ES_SYSTEM_REQUIRED)` | Chặn sleep do idle đến khi job xong, lỗi hoặc bị hủy; sau đó trả về chế độ bình thường |
+| Tắt power throttling (`SetProcessInformation` / `ProcessPowerThrottling`) | Worker không bị Windows 11 đưa sang EcoQoS, giữ tốc độ CPU khi app ở nền |
+| Tùy chọn giữ màn hình sáng | `--keep-display-on` hoặc `LOCALSUB_KEEP_DISPLAY_ON=1`; mặc định cho màn hình tắt (máy vẫn chạy) để tiết kiệm điện |
+
+- Bật/tắt bằng ô **Giữ máy thức khi xử lý** trong *Cấu hình* (mặc định bật, app nhớ lựa chọn). Dòng lệnh: `--allow-sleep` để tắt; biến `LOCALSUB_KEEP_AWAKE=0` cũng tắt.
+- Ô *Giữ máy thức* trong *Môi trường chạy* hiện `Bật · tốc độ tối đa` khi cả hai cơ chế đã áp dụng. `jobs.jsonl` ghi trường `power` (`keep_awake`, `display_on`, `throttling_disabled`, `reason`).
+- **Giới hạn:** gập màn hình, bấm nút nguồn hoặc chọn Sleep trong Start vẫn làm máy ngủ. Với job dài nên cắm sạc và đặt *Control Panel → Power Options → Choose what closing the lid does* = *Do nothing* khi cắm sạc. Chính sách công ty (GPO) có thể ghi đè.
+
+### Kết hợp CPU, NPU, GPU — đã đo gì (0.9.0)
+
+Phân công hiện tại: **NPU** nhận dạng, **GPU** dịch theo lô và chạy chồng với nhận dạng, **CPU** giải mã âm thanh (FFmpeg), điều phối và tokenizer. Các cách kết hợp thêm đã được thử và **không đưa vào** vì chậm hơn:
+
+| Cách | Kết quả đo | Lý do |
+|---|---|---|
+| GPU + NPU cùng dịch (0.7.0) | Video 2h28m: 38m22s so với 32m50s chỉ GPU | Hai bản model tranh băng thông RAM chung |
+| Speculative decoding: model nháp nhỏ (Qwen3 0.6B) đoán trước, model chính kiểm tra | Sandbox CPU, Qwen3 1.7B, 79 câu: dịch theo lô 4 → 127 s, thêm model nháp → 139 s (chậm hơn 9%); không theo lô: 212 s → 201 s | Dịch theo lô đã đọc trọng số một lần cho nhiều câu, nên model nháp không còn lợi |
+| Qwen3.5 MTP (đầu dự đoán nhiều token) | Sandbox CPU, 79 câu: 148 s một-câu-một-lần so với 124 s theo lô | MTP chỉ chạy được từng chuỗi một |
+
+Vì bước dịch bị giới hạn bởi băng thông RAM, cách tăng tốc hiệu quả nhất vẫn là: dịch theo lô trên GPU, chạy chồng với nhận dạng trên NPU, và không để Windows hạ tốc độ worker (mục trên).
+
 ### Giao diện (0.7.0)
 
 - Bố cục một màn hình: cột trái là **Media, Cấu hình, Môi trường chạy**; khung phải có thanh tiến độ + nút **Tạo phụ đề** và 4 tab **Phụ đề / Tải hệ thống / Lịch sử / Model**. Chỉ nội dung trong tab cuộn, cả cửa sổ không cuộn.
@@ -501,6 +537,9 @@ Cách đọc: nếu ở bước Dịch mà GPU thấp và CPU cao, model dịch 
 | `LOCALSUB_LOG_LEVEL` | `INFO` | `DEBUG`, `INFO`, `WARNING`, `ERROR` |
 | `LOCALSUB_OVERLAP` | bật | `0` tắt chạy chồng nhận dạng/dịch; `force` cho phép cả khi cùng thiết bị (chỉ để đo) |
 | `LOCALSUB_TRANSLATION_PARALLEL` | tự động (NPU: `1`) | Cố định số lô dịch mỗi lần gọi model (1–16) và tắt tự điều chỉnh. Không đặt: GPU/CPU tự chọn 4/8/16, NPU dùng 1 |
+| `LOCALSUB_KEEP_AWAKE` | bật | `0` cho phép Windows sleep/hạ tốc độ worker khi đang xử lý (giống `--allow-sleep`) |
+| `LOCALSUB_KEEP_DISPLAY_ON` | tắt | `1` giữ màn hình sáng trong lúc xử lý |
+| `LOCALSUB_VLM_CACHE_GB` | `2` | Bộ nhớ cache (GB) cho model Qwen3.5 khi dịch theo lô |
 | `LOCALSUB_WORKER_DIR` | tự dò | App desktop: thư mục chứa `app\main.py` |
 | `LOCALSUB_WORKER_PYTHON` | `<worker>\.venv\Scripts\python.exe` | App desktop: Python dùng để chạy worker |
 
@@ -576,6 +615,7 @@ CI (GitHub Actions) chạy Python lint/test, frontend lint/type-check/test/build
 - Kiểm tra giao diện bằng Playwright (bản xem trước): tải/dừng/xóa model, lịch sử, đổi VI/EN, màn hình 390 px.
 - Đã chạy thật trên CPU (OpenVINO 2026.4): video 44 giây → 8 câu tiếng Anh → dịch tiếng Việt, xuất đủ 4 định dạng.
 - Đã chạy thật trên CPU: audio tiếng Nhật 19 giây, `--language auto` nhận đúng `ja`, whisper-small + qwen3-4b dịch sang tiếng Việt và tiếng Anh, 0 dòng fallback.
+- 0.9.0: pytest 132 đạt / 2 bỏ qua, Vitest 38 đạt; Qwen3.5 0.8B nạp thật qua `ContinuousBatchingPipeline` trên CPU (OpenVINO 2026.4) và dịch 32 câu, 0 dòng fallback. Giữ máy thức kiểm bằng Windows API giả lập (chưa đo trên máy thật).
 - **Chưa kiểm chứng:** chạy trên NPU vật lý (Whisper và model dịch 8B) và `npm run tauri dev` trên Windows.
 
 ---
@@ -602,7 +642,8 @@ CI (GitHub Actions) chạy Python lint/test, frontend lint/type-check/test/build
 6. Wave 5B: giao diện gọn một màn hình có tab. ✅ (chế độ GPU+NPU thử nghiệm ở 0.7.0 đã bỏ ở 0.8.0)
 7. Wave 6A: GPU tự điều chỉnh 4/8/16 lô mỗi lần, lùi mức khi lỗi bộ nhớ. ✅
 8. Wave 6B: nhận dạng (NPU) và dịch (GPU) chạy chồng theo từng đoạn, nạp model dịch song song. ✅
-9. Tiếp theo (backlog): chẩn đoán rõ lỗi driver NPU, preset tốc độ/chất lượng, benchmark thiết bị ngay trong app, ký số bộ cài, kèm FFmpeg trong bộ cài, tự cập nhật.
+9. Wave 7: giữ máy thức + tắt EcoQoS khi xử lý, danh mục model dùng chung, thêm Qwen3.5 (GPU/CPU) và Distil-Whisper EN (thử nghiệm). ✅
+10. Tiếp theo (backlog): đo tốc độ Qwen3.5 trên GPU Arc, chẩn đoán rõ lỗi driver NPU, preset tốc độ/chất lượng, benchmark thiết bị ngay trong app, ký số bộ cài, kèm FFmpeg trong bộ cài, tự cập nhật.
 
 ## Giấy phép
 

@@ -19,7 +19,7 @@ export function ModelManager(props: {
   onChanged: () => void;
 }) {
   const { bridge, selected, jobRunning, onChanged } = props;
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const [models, setModels] = useState<ModelInfo[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [progress, setProgress] = useState<Progress | null>(null);
@@ -121,6 +121,9 @@ export function ModelManager(props: {
                 <div className="model-name">
                   <code>{m.id}</code>
                   {selected.includes(m.id) && <span className="tag">{t("models.inUse")}</span>}
+                  {m.experimental && <span className="tag muted" title={m.hint?.[locale]}>{t("config.experimental")}</span>}
+                  {m.languages?.length ? <span className="tag muted">{m.languages.map((l) => l.toUpperCase()).join("/")}</span> : null}
+                  {m.devices && m.devices.length < 3 && <span className="tag muted">{m.devices.join("/")}</span>}
                 </div>
                 <span className={`model-status ${m.status}`}>{t(`models.status.${m.status}`)}</span>
                 <span className="model-size">

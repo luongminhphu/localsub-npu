@@ -11,7 +11,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from app import audio, translation, whisper
+from app import audio, power, translation, whisper
 from app.audit import AuditLog
 from app.config import Settings
 from app.errors import ErrorCode, LocalSubError
@@ -34,6 +34,8 @@ class JobRequest:
     translation_model: str = translation.DEFAULT_TRANSLATION_MODEL
     translation_device: str | None = None
     formats: tuple[str, ...] = ("srt",)
+    keep_awake: bool = True  # hold off idle sleep and EcoQoS throttling while the job runs
+    keep_display_on: bool = False
 
 
 @dataclass
@@ -57,6 +59,7 @@ class JobRecord:
     translation_device: DeviceResolution | None = None
     translation_fallback_lines: int | None = None
     translation_parallel: int | None = None  # batches per generate() call after tuning
+    power: dict[str, Any] | None = None  # keep-awake / throttling state applied for the job
     overlap: bool | None = None  # translation ran while Whisper was still transcribing
     overlap_reason: str | None = None
     translation_overlap_lines: int | None = None  # lines translated by the overlapping thread
@@ -314,6 +317,31 @@ def run_job(
     pipeline_factory: whisper.PipelineFactory | None = None,
     ffmpeg_runner: audio.Runner | None = None,
     llm_factory: translation.LLMFactory | None = None,
+    kernel32: Any | None = None,
+) -> JobRecord:
+    """Run one job with the PC held awake (Windows) until it finishes, fails or is cancelled."""
+    with power.keep_awake(request.keep_awake, request.keep_display_on, kernel32) as state:
+        return _run_job(
+            settings,
+            request,
+            emit,
+            runtime_probe,
+            pipeline_factory,
+            ffmpeg_runner,
+            llm_factory,
+            state,
+        )
+
+
+def _run_job(
+    settings: Settings,
+    request: JobRequest,
+    emit: EventSink | None = None,
+    runtime_probe: Callable[[], tuple[str | None, tuple[str, ...]]] = _openvino_version,
+    pipeline_factory: whisper.PipelineFactory | None = None,
+    ffmpeg_runner: audio.Runner | None = None,
+    llm_factory: translation.LLMFactory | None = None,
+    power_state: power.PowerState | None = None,
 ) -> JobRecord:
     record = JobRecord(
         job_id=uuid.uuid4().hex[:12],
@@ -345,6 +373,9 @@ def run_job(
         record.timings_ms[name] = int((time.perf_counter() - started) * 1000)
 
     prune_stale_temp(temp_audio.parent)
+    if power_state is not None:
+        record.power = power_state.to_dict()
+        send({"type": "power", **record.power})
     try:
         transition(JobState.PROBING)
         unknown = [f for f in request.formats if f not in FORMATS]
@@ -352,6 +383,7 @@ def run_job(
             raise LocalSubError(ErrorCode.INPUT_UNSUPPORTED, f"Unknown export formats: {unknown}")
         if request.translate_to not in (None, *translation.TARGET_LANGUAGES):
             raise LocalSubError(ErrorCode.INPUT_UNSUPPORTED, "translate_to must be vi or en")
+        whisper.check_language_support(request.model_id, request.language, request.task)
         source = audio.validate_source(request.source)
         record.source_path = source
         ffmpeg = audio.resolve_ffmpeg(settings.ffmpeg_path)

@@ -16,19 +16,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from app import catalog
 from app.devices import compile_with_fallback, ensure_ir_present
 from app.errors import ErrorCode, LocalSubError
 from app.models import DeviceResolution
 
-# Pre-converted OpenVINO IR LLMs published by Intel. "-cw-" = channel-wise symmetric INT4,
-# the layout recommended for Intel NPU.
-TRANSLATION_CATALOG: dict[str, str] = {
-    "qwen3-8b-int4-cw": "OpenVINO/Qwen3-8B-int4-cw-ov",
-    "qwen2.5-7b-instruct-int4": "OpenVINO/Qwen2.5-7B-Instruct-int4-ov",
-    "qwen3-4b-int4": "OpenVINO/Qwen3-4B-int4-ov",
-    "qwen2.5-1.5b-instruct-int4": "OpenVINO/Qwen2.5-1.5B-Instruct-int4-ov",
-    "qwen3-0.6b-int4": "OpenVINO/Qwen3-0.6B-int4-ov",
-}
+# Pre-converted OpenVINO IR LLMs published by Intel, from the shared model catalog.
+# "-cw-" = channel-wise symmetric INT4, the layout recommended for Intel NPU.
+TRANSLATION_CATALOG: dict[str, str] = {m: s.repo for m, s in catalog.of_kind("translation").items()}
 DEFAULT_TRANSLATION_MODEL = "qwen3-8b-int4-cw"
 LANGUAGE_NAMES = {"en": "English", "ja": "Japanese", "vi": "Vietnamese"}
 SOURCE_LANGUAGES = ("en", "ja", "vi")
@@ -76,6 +71,20 @@ REQUIRED_FILES: tuple[str, ...] = (
     "openvino_tokenizer.xml",
     "openvino_detokenizer.xml",
 )
+# Vision-language IR (Qwen3.5) used text-only: the vision encoder files are never loaded
+# by the text path, so they are not required.
+VLM_REQUIRED_FILES: tuple[str, ...] = (
+    "openvino_language_model.xml",
+    "openvino_text_embeddings_model.xml",
+    "openvino_tokenizer.xml",
+    "openvino_detokenizer.xml",
+)
+VLM_CACHE_GB = 2  # KV + linear-attention cache for the continuous-batching scheduler
+
+
+def required_files(model_id: str) -> tuple[str, ...]:
+    spec = catalog.spec(model_id)
+    return VLM_REQUIRED_FILES if spec and spec.runtime == "vlm" else REQUIRED_FILES
 
 
 def model_path_for(model_dir: Path, model_id: str) -> Path:
@@ -90,7 +99,7 @@ def model_path_for(model_dir: Path, model_id: str) -> Path:
 def ensure_model_present(path: Path, model_id: str) -> Path:
     return ensure_ir_present(
         path,
-        REQUIRED_FILES,
+        required_files(model_id),
         model_id,
         "models download",
     )
@@ -141,6 +150,68 @@ def _default_factory(path: Path, device: str, properties: dict[str, Any]) -> Any
     return openvino_genai.LLMPipeline(str(path), device, **properties)
 
 
+class _Texts:
+    def __init__(self, texts: list[str]) -> None:
+        self.texts = texts
+
+
+class VLMTextPipeline:
+    """Text-only adapter over a vision-language IR (Qwen3.5).
+
+    ``VLMPipeline.generate`` takes one prompt, so the continuous-batching pipeline is used
+    instead: it accepts a list of prompts with no images, which keeps the batched GPU/CPU
+    path (measured on CPU: batched 124 s vs one-by-one with the MTP draft 148 s, 79 lines).
+    Prefix caching is off, as OpenVINO GenAI requires for these hybrid-attention models.
+    """
+
+    def __init__(self, pipeline: Any) -> None:
+        self.pipeline = pipeline
+
+    def get_tokenizer(self) -> Any:
+        return self.pipeline.get_tokenizer()
+
+    def generate(self, prompt: Any, config: Any = None, **kwargs: Any) -> Any:
+        prompts = list(prompt) if isinstance(prompt, list | tuple) else [prompt]
+        if config is None:
+            try:
+                config = _config(int(kwargs.get("max_new_tokens", 256)))
+            except ImportError:  # only in tests without openvino-genai
+                config = None
+        results = self.pipeline.generate(prompts, [[] for _ in prompts], [config] * len(prompts))
+        texts = [str(r.texts[0]) if getattr(r, "texts", None) else "" for r in results]
+        return _Texts(texts) if isinstance(prompt, list | tuple) else texts[0]
+
+
+def _vlm_factory(path: Path, device: str, properties: dict[str, Any]) -> Any:
+    try:
+        import openvino_genai
+    except ImportError as exc:
+        raise LocalSubError(
+            ErrorCode.OPENVINO_UNAVAILABLE, "openvino-genai is not installed in this environment."
+        ) from exc
+    scheduler = openvino_genai.SchedulerConfig()
+    raw = os.getenv("LOCALSUB_VLM_CACHE_GB", "").strip()
+    scheduler.cache_size = int(raw) if raw.isdigit() and int(raw) > 0 else VLM_CACHE_GB
+    scheduler.enable_prefix_caching = False
+    scheduler.max_num_seqs = MAX_PARALLEL
+    pipeline = openvino_genai.ContinuousBatchingPipeline(str(path), scheduler, device, properties)
+    return VLMTextPipeline(pipeline)
+
+
+def devices_for(model_id: str, preference: str) -> list[str]:
+    """Candidate devices for ``model_id``; an explicit device the model cannot use fails."""
+    candidates = candidate_devices(preference)
+    spec = catalog.spec(model_id)
+    if spec is None:
+        return candidates
+    if preference != "auto" and preference not in spec.devices:
+        raise LocalSubError(
+            ErrorCode.DEVICE_UNAVAILABLE,
+            f"{spec.label} runs on {'/'.join(spec.devices)} only, not {preference}.",
+        )
+    return [d for d in candidates if d in spec.devices]
+
+
 def load_translator(
     model_path: Path,
     model_id: str,
@@ -148,8 +219,15 @@ def load_translator(
     candidates: Sequence[str],
     available_devices: tuple[str, ...],
     cache_dir: Path | None = None,
-    factory: LLMFactory = _default_factory,
+    factory: LLMFactory | None = None,
 ) -> LoadedTranslator:
+    spec = catalog.spec(model_id)
+    if factory is None:
+        factory = _vlm_factory if spec and spec.runtime == "vlm" else _default_factory
+    if spec is not None:
+        if requested != "auto" and requested not in spec.devices:
+            devices_for(model_id, requested)  # raises with a clear message
+        candidates = [d for d in candidates if d in spec.devices] or list(spec.devices)
     compiled = compile_with_fallback(
         model_path,
         requested,

@@ -18,25 +18,14 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from app import catalog as model_catalog
 from app import translation, whisper
 from app.audit import AuditLog, to_jsonable
 from app.devices import MARKER_FILE, ir_status
 from app.errors import ErrorCode, LocalSubError
 
 # Approximate download sizes, shown before a download starts (no network needed).
-APPROX_SIZE_MB: dict[str, int] = {
-    "whisper-tiny-int8": 70,
-    "whisper-base-int8": 120,
-    "whisper-small-int8": 250,
-    "whisper-medium-int8": 800,
-    "whisper-large-v3-turbo-int8": 850,
-    "whisper-large-v3-int8": 1600,
-    "qwen3-8b-int4-cw": 5000,
-    "qwen2.5-7b-instruct-int4": 4500,
-    "qwen3-4b-int4": 2300,
-    "qwen2.5-1.5b-instruct-int4": 1000,
-    "qwen3-0.6b-int4": 500,
-}
+APPROX_SIZE_MB: dict[str, int] = {m.id: m.approx_mb for m in model_catalog.MODELS}
 DISK_HEADROOM = 1.10  # keep 10% spare on top of the model size
 
 EventSink = Callable[[dict[str, Any]], None]
@@ -59,7 +48,7 @@ def catalog() -> dict[str, CatalogEntry]:
     }
     entries.update(
         {
-            m: CatalogEntry(m, "translation", repo, translation.REQUIRED_FILES)
+            m: CatalogEntry(m, "translation", repo, translation.required_files(m))
             for m, repo in translation.TRANSLATION_CATALOG.items()
         }
     )
@@ -111,6 +100,7 @@ def list_models(model_dir: Path) -> list[dict[str, Any]]:
                 "size_bytes": folder_size(path) if state != "missing" else 0,
                 "approx_size_mb": APPROX_SIZE_MB.get(m),
                 "path": path,
+                **(spec.to_dict() if (spec := model_catalog.spec(m)) else {}),
             }
         )
     return rows

@@ -39,23 +39,10 @@ import type {
   TargetLanguage,
   WorkerStage,
 } from "./lib/types";
+import { choicesFrom, deviceSupported, FALLBACK_MODELS, findChoice, languageSupported, type ModelChoice } from "./lib/catalog";
 import { getBridge, type WorkerBridge } from "./lib/worker";
 
-const WHISPER_MODELS = [
-  { id: "whisper-small-int8", label: "Whisper small" },
-  { id: "whisper-base-int8", label: "Whisper base" },
-  { id: "whisper-tiny-int8", label: "Whisper tiny" },
-  { id: "whisper-medium-int8", label: "Whisper medium" },
-  { id: "whisper-large-v3-turbo-int8", label: "Whisper large-v3 turbo" },
-  { id: "whisper-large-v3-int8", label: "Whisper large-v3" },
-];
-const LLM_MODELS = [
-  { id: "qwen3-8b-int4-cw", label: "Qwen3 8B" },
-  { id: "qwen2.5-7b-instruct-int4", label: "Qwen2.5 7B" },
-  { id: "qwen3-4b-int4", label: "Qwen3 4B" },
-  { id: "qwen2.5-1.5b-instruct-int4", label: "Qwen2.5 1.5B" },
-  { id: "qwen3-0.6b-int4", label: "Qwen3 0.6B" },
-];
+const KEEP_AWAKE_KEY = "localsub.keepAwake";
 const DEVICES: Array<{ value: DevicePreference; label: string }> = [
   { value: "auto", label: "device.auto" },
   { value: "NPU", label: "NPU" },
@@ -111,6 +98,8 @@ export function App() {
   const t = useCallback<Translate>((key, params) => translate(locale, key, params), [locale]);
   const i18n = useMemo(() => ({ locale, t }), [locale, t]);
   const [modelStatus, setModelStatus] = useState<Record<string, string>>({});
+  const [choices, setChoices] = useState<ModelChoice[]>(FALLBACK_MODELS);
+  const [keepAwake, setKeepAwake] = useState(() => safeStorage()?.getItem(KEEP_AWAKE_KEY) !== "0");
   const [diagAt, setDiagAt] = useState<Date | null>(null);
   const [historyKey, setHistoryKey] = useState(0);
   const [bridge, setBridge] = useState<WorkerBridge | null>(null);
@@ -137,6 +126,10 @@ export function App() {
   }, []);
 
   useEffect(() => {
+    safeStorage()?.setItem(KEEP_AWAKE_KEY, keepAwake ? "1" : "0");
+  }, [keepAwake]);
+
+  useEffect(() => {
     document.documentElement.lang = locale;
     safeStorage()?.setItem(LOCALE_STORAGE_KEY, locale);
   }, [locale]);
@@ -150,6 +143,7 @@ export function App() {
       setDiagAt(new Date());
       const list = await bridge.models().catch(() => []);
       setModelStatus(Object.fromEntries(list.map((m) => [m.id, m.status])));
+      if (list.length) setChoices(choicesFrom(list));
     } catch (err) {
       setDiagError(String(err));
     } finally {
@@ -209,6 +203,17 @@ export function App() {
     return ` ${shown}${eta === null ? "" : ` · ${t("job.eta", { eta: formatDuration(eta) })}`}`;
   };
   const hasTranslation = Boolean(project?.cues.some((c) => c.translation !== null));
+  const whisperChoices = choices.filter((c) => c.kind === "asr");
+  const llmChoices = choices.filter((c) => c.kind === "translation");
+  const asrChoice = findChoice(choices, model);
+  const llmChoice = findChoice(choices, translationModel);
+  const asrLanguageOk = languageSupported(asrChoice, language);
+  const llmDeviceOk = !translateTo || deviceSupported(llmChoice, translationDevice);
+  const asrDeviceOk = deviceSupported(asrChoice, device);
+  const hintFor = (c: ModelChoice | undefined, id: string) =>
+    c?.hint?.[locale] ?? t(`hint.${id}` as MessageKey);
+  const optionLabel = (c: ModelChoice) =>
+    `${c.label}${c.experimental ? ` · ${t("config.experimental")}` : ""}${modelSuffix(c.id)}`;
   const missingModels = [model, ...(translateTo ? [translationModel] : [])].filter(
     (m) => diagnostics && !installed.has(m),
   );
@@ -225,6 +230,7 @@ export function App() {
       translationModel,
       translationDevice,
       formats,
+      keepAwake,
     };
     dispatch({ type: "start" });
     setMarkers([]);
@@ -348,15 +354,21 @@ export function App() {
             <label htmlFor="model">{t("config.speechModel")}</label>
             <div className="field-row tight">
               <select id="model" value={model} onChange={(e) => setModel(e.target.value)}>
-                {WHISPER_MODELS.map((m) => (
-                  <option key={m.id} value={m.id}>{m.label}{modelSuffix(m.id)}</option>
+                {whisperChoices.map((m) => (
+                  <option key={m.id} value={m.id}>{optionLabel(m)}</option>
                 ))}
               </select>
               <select aria-label={t("config.speechDevice")} value={device} onChange={(e) => setDevice(e.target.value as DevicePreference)}>
-                {DEVICES.map((d) => <option key={d.value} value={d.value}>{deviceLabel(t, d.label)}</option>)}
+                {DEVICES.map((d) => (
+                  <option key={d.value} value={d.value} disabled={!deviceSupported(asrChoice, d.value)}>{deviceLabel(t, d.label)}</option>
+                ))}
               </select>
             </div>
-            <p className="help-text">{t(`hint.${model}` as MessageKey)} {t("config.autoOrder")}</p>
+            <p className="help-text">{hintFor(asrChoice, model)} {t("config.autoOrder")}</p>
+            {!asrLanguageOk && (
+              <p className="error" role="alert">{t("config.languageOnly", { model: asrChoice?.label ?? model, langs: (asrChoice?.languages ?? []).map((l) => t(`lang.${l}` as MessageKey)).join(", ") })}</p>
+            )}
+            {!asrDeviceOk && <p className="error" role="alert">{t("config.deviceOnly", { model: asrChoice?.label ?? model, devices: asrChoice?.devices.join("/") ?? "" })}</p>}
             {language === "ja" && JA_WEAK_MODELS.has(model) && <p className="warn">{t("config.jaWarn")}</p>}
           </div>
           {translateTo && (
@@ -364,17 +376,18 @@ export function App() {
               <label htmlFor="llm">{t("config.translationModel")}</label>
               <div className="field-row tight">
                 <select id="llm" value={translationModel} onChange={(e) => setTranslationModel(e.target.value)}>
-                  {LLM_MODELS.map((m) => (
-                    <option key={m.id} value={m.id}>{m.label}{modelSuffix(m.id)}</option>
+                  {llmChoices.map((m) => (
+                    <option key={m.id} value={m.id}>{optionLabel(m)}</option>
                   ))}
                 </select>
                 <select aria-label={t("config.translationDevice")} value={translationDevice} onChange={(e) => setTranslationDevice(e.target.value as TranslationDevice)}>
-                  {TRANSLATION_DEVICES.map((d) => <option key={d.value} value={d.value}>{deviceLabel(t, d.label)}</option>)}
+                  {TRANSLATION_DEVICES.map((d) => (
+                    <option key={d.value} value={d.value} disabled={!deviceSupported(llmChoice, d.value)}>{deviceLabel(t, d.label)}</option>
+                  ))}
                 </select>
               </div>
-              <p className="help-text">
-                {t(`hint.${translationModel}` as MessageKey)}
-              </p>
+              <p className="help-text">{hintFor(llmChoice, translationModel)}</p>
+              {!llmDeviceOk && <p className="error" role="alert">{t("config.deviceOnly", { model: llmChoice?.label ?? translationModel, devices: llmChoice?.devices.join("/") ?? "" })}</p>}
             </div>
           )}
           <fieldset className="formats">
@@ -386,6 +399,11 @@ export function App() {
               </label>
             ))}
           </fieldset>
+          <label className="check keep-awake">
+            <input type="checkbox" checked={keepAwake} onChange={(e) => setKeepAwake(e.target.checked)} disabled={running} />
+            {t("config.keepAwake")}
+          </label>
+          <p className="help-text">{t("config.keepAwakeHint")}</p>
         </article>
 
         <article className="panel">
@@ -403,6 +421,12 @@ export function App() {
             <div><dt>{t("runtime.autoResolves")}</dt><dd className={diagnostics?.device_resolution?.resolved === "NPU" ? "ok" : ""}>{diagnostics?.device_resolution?.resolved ?? "—"}</dd></div>
             <div><dt>{t("runtime.speechUsed")}</dt><dd>{job.asrDevice ?? "—"}</dd></div>
             <div><dt>{t("runtime.translationUsed")}</dt><dd>{job.translationDevice ?? "—"}</dd></div>
+            <div>
+              <dt>{t("runtime.keepAwake")}</dt>
+              <dd className={job.power?.keep_awake ? "ok" : ""} title={job.power?.reason ?? undefined}>
+                {!job.power ? "—" : job.power.keep_awake ? (job.power.throttling_disabled ? t("runtime.awakeFull") : t("runtime.awakeOn")) : job.power.reason === "disabled" ? t("runtime.awakeOff") : t("runtime.awakeUnsupported")}
+              </dd>
+            </div>
           </dl>
           {diagnostics && !diagnostics.ffmpeg_available && <p className="warn">{t("runtime.ffmpegHint")}</p>}
           {(job.asrFallback || job.translationFallback) && (
@@ -434,7 +458,7 @@ export function App() {
           {running ? (
             <button type="button" className="danger" onClick={() => void bridge?.cancelJob()}>{t("job.cancel")}</button>
           ) : (
-            <button type="button" onClick={start} disabled={!source || !bridge || formats.length === 0 || missingModels.length > 0}>
+            <button type="button" onClick={start} disabled={!source || !bridge || formats.length === 0 || missingModels.length > 0 || !asrLanguageOk || !asrDeviceOk || !llmDeviceOk}>
               {t("job.generate")}
             </button>
           )}
