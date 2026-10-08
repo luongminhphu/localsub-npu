@@ -36,6 +36,8 @@ class TranscriptionResult:
     segments: tuple[TimedText, ...]
     detected_language: str | None
     inference_ms: int
+    model: LoadedModel | None = None  # the model that finished (differs after recovery)
+    recoveries: int = 0
 
 
 REQUIRED_FILES: tuple[str, ...] = (
@@ -125,6 +127,19 @@ SILENCE_PEAK = 0.003  # ~-50 dBFS: nothing Whisper could transcribe, only halluc
 
 ProgressSink = Callable[[int, int], None]
 ChunkSink = Callable[[tuple[TimedText, ...], str | None], None]
+# Called with the model that failed and the chunk start (ms) after the device was lost;
+# returns a freshly loaded model to retry the chunk with, or None to give up.
+Recover = Callable[["LoadedModel", int], "LoadedModel | None"]
+MAX_RECOVERIES = 3  # per job: same-device reload, then other devices
+
+_DEVICE_LOST = ("ZE_RESULT_ERROR_DEVICE_LOST", "DEVICE_LOST", "device lost", "device was lost")
+
+
+def is_device_lost(exc: BaseException) -> bool:
+    """The NPU/GPU driver reset under us (Level Zero / OpenCL device lost): the compiled
+    model is dead, but reloading it (or moving to another device) usually works."""
+    text = str(exc)
+    return any(marker.lower() in text.lower() for marker in _DEVICE_LOST)
 
 
 def _frame_energy(samples: Sequence[float], start: int, stop: int) -> float:
@@ -191,11 +206,15 @@ def transcribe(
     on_progress: ProgressSink | None = None,
     chunk_seconds: float = CHUNK_SECONDS,
     on_chunk: ChunkSink | None = None,
+    recover: Recover | None = None,
 ) -> TranscriptionResult:
     """Transcribe chunk by chunk; ``on_progress(done_ms, total_ms)`` after each chunk.
 
     ``on_chunk(segments_so_far, detected_language)`` also runs after each chunk so a
-    consumer (the overlapping translator) can start on finished lines."""
+    consumer (the overlapping translator) can start on finished lines.
+
+    If the device is lost mid-run, ``recover`` supplies a new model and the failed chunk is
+    retried; finished chunks are kept, so a 2-hour video does not restart from zero."""
     if language not in LANGUAGES:
         raise ValueError(f"language must be one of {sorted(LANGUAGES)}")
     if task not in TASKS:
@@ -204,6 +223,7 @@ def transcribe(
     total_ms = int(len(samples) * 1000 / SAMPLE_RATE)
     segments: list[TimedText] = []
     detected: str | None = None
+    recoveries = 0
     ranges = split_points(samples, SAMPLE_RATE, chunk_seconds)
     for begin, stop in ranges:
         piece = samples[begin:stop]
@@ -216,12 +236,23 @@ def transcribe(
             pinned = language if language != "auto" else detected
             if pinned:
                 kwargs["language"] = f"<|{pinned}|>"
-            try:
-                result = model.pipeline.generate(piece, **kwargs)
-            except Exception as exc:
-                raise LocalSubError(
-                    ErrorCode.TRANSCRIPTION_FAILED, f"Whisper inference failed: {str(exc)[:200]}"
-                ) from exc
+            while True:
+                try:
+                    result = model.pipeline.generate(piece, **kwargs)
+                    break
+                except Exception as exc:
+                    lost = is_device_lost(exc)
+                    replacement = None
+                    if lost and recover is not None and recoveries < MAX_RECOVERIES:
+                        recoveries += 1
+                        replacement = recover(model, offset_ms)
+                    if replacement is not None:
+                        model = replacement
+                        continue
+                    code = ErrorCode.DEVICE_LOST if lost else ErrorCode.TRANSCRIPTION_FAILED
+                    raise LocalSubError(
+                        code, f"Whisper inference failed: {str(exc)[:200]}"
+                    ) from exc
             if detected is None:
                 detected = _language_token(result)
             chunks = getattr(result, "chunks", None) or []
@@ -242,4 +273,4 @@ def transcribe(
         if on_progress:
             on_progress(min(total_ms, int(round(stop * 1000 / SAMPLE_RATE))), total_ms)
     inference_ms = int((time.perf_counter() - started) * 1000)
-    return TranscriptionResult(tuple(segments), detected, inference_ms)
+    return TranscriptionResult(tuple(segments), detected, inference_ms, model, recoveries)

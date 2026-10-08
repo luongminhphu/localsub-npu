@@ -53,7 +53,7 @@ export interface PowerState {
 }
 
 export interface WorkerEvent {
-  type: "state" | "progress" | "summary" | "error" | "warning" | "power";
+  type: "state" | "progress" | "summary" | "error" | "warning" | "power" | "device";
   keep_awake?: boolean;
   display_on?: boolean;
   throttling_disabled?: boolean;

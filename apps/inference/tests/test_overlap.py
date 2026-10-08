@@ -42,7 +42,7 @@ class StreamingWhisper:
         call = self.calls
         self.calls += 1
         if self.fail_at is not None and call == self.fail_at:
-            raise RuntimeError("NPU device lost")
+            raise RuntimeError("Whisper decoder crashed")
         time.sleep(self.delay)
 
         class R:

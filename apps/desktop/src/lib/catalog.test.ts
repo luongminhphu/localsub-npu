@@ -39,6 +39,20 @@ describe("model catalog", () => {
   });
 });
 
+describe("device event", () => {
+  it("updates the speech device after a driver reset", () => {
+    const running = jobReducer(initialJob, { type: "start" });
+    const asr = jobReducer(running, { type: "event", event: { type: "state", state: "transcribing", device: "NPU", fallback_reason: null } });
+    const moved = jobReducer(asr, {
+      type: "event",
+      event: { type: "device", stage: "transcribing", device: "CPU", fallback_reason: "NPU device lost at 35:00; continued on CPU" },
+    });
+    expect(moved.asrDevice).toBe("CPU");
+    expect(moved.asrFallback).toContain("device lost");
+    expect(moved.stage).toBe("transcribing");
+  });
+});
+
 describe("power event", () => {
   it("records the keep-awake state for the job", () => {
     const running = jobReducer(initialJob, { type: "start" });
