@@ -1,5 +1,7 @@
 """Keep-awake and power-throttling opt-out (Windows API calls through a fake kernel32)."""
 
+import ctypes
+
 import pytest
 
 from app import power
@@ -26,6 +28,9 @@ class FakeKernel32:
 
     def SetProcessInformation(self, handle, info_class, state_ref, size) -> int:  # noqa: N802
         state = state_ref._obj
+        # The pseudo handle must reach Windows as a 64-bit -1, not a 32-bit int.
+        assert isinstance(handle, ctypes.c_void_p) and handle.value == ctypes.c_void_p(-1).value
+        info_class = getattr(info_class, "value", info_class)
         self.throttling_calls.append((info_class, state.ControlMask, state.StateMask))
         return 1 if self.throttling_ok else 0
 

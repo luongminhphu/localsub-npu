@@ -104,14 +104,12 @@ def test_repeated_reset_moves_to_gpu_then_cpu_on_auto(
     assert record.device.resolved == "CPU"
 
 
-def test_overlap_prefers_cpu_while_translator_holds_gpu(
-    tmp_path, settings, installed_model, chunked
-) -> None:
+def test_overlap_still_moves_to_gpu_next(tmp_path, settings, installed_model, chunked) -> None:
     asr = Whisper(fail_calls={1, 2})
     record, _ = run(settings, tmp_path, asr, translate=True)
     assert record.state == JobState.COMPLETED, record.error_message
     assert record.overlap is True
-    assert asr.loads == ["NPU", "NPU", "CPU"]
+    assert asr.loads == ["NPU", "NPU", "GPU"]
     assert record.translation_fallback_lines == 0
 
 

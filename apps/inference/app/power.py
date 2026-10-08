@@ -50,7 +50,19 @@ def _kernel32() -> Any | None:
     try:
         import ctypes
 
-        return ctypes.windll.kernel32  # type: ignore[attr-defined]
+        k32 = ctypes.WinDLL("kernel32", use_last_error=True)  # type: ignore[attr-defined]
+        k32.GetCurrentProcess.restype = ctypes.c_void_p
+        k32.GetCurrentProcess.argtypes = []
+        k32.SetProcessInformation.restype = ctypes.c_int
+        k32.SetProcessInformation.argtypes = [
+            ctypes.c_void_p,
+            ctypes.c_int,
+            ctypes.c_void_p,
+            ctypes.c_ulong,
+        ]
+        k32.SetThreadExecutionState.restype = ctypes.c_uint
+        k32.SetThreadExecutionState.argtypes = [ctypes.c_uint]
+        return k32
     except (ImportError, AttributeError, OSError):
         return None
 
@@ -72,11 +84,17 @@ def disable_power_throttling(kernel32: Any | None = None) -> bool:
 
         mask = THROTTLE_EXECUTION_SPEED | THROTTLE_IGNORE_TIMER_RESOLUTION
         state = _State(THROTTLING_VERSION, mask, 0)  # control these flags, all turned off
+        # Typed arguments matter on x64: without them ctypes passes the pseudo handle (-1)
+        # from GetCurrentProcess as a 32-bit int, Windows sees 0xFFFFFFFF, an invalid
+        # handle, and the call fails (0.9.0 logged throttling_disabled=false on Windows).
+        handle = kernel32.GetCurrentProcess()
+        if not isinstance(handle, ctypes.c_void_p):
+            handle = ctypes.c_void_p(handle if handle is not None else -1)
         ok = kernel32.SetProcessInformation(
-            kernel32.GetCurrentProcess(),
-            PROCESS_POWER_THROTTLING,
+            handle,
+            ctypes.c_int(PROCESS_POWER_THROTTLING),
             ctypes.byref(state),
-            ctypes.sizeof(state),
+            ctypes.c_ulong(ctypes.sizeof(state)),
         )
         return bool(ok)
     except (AttributeError, OSError, TypeError, ValueError):

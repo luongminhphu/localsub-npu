@@ -179,13 +179,14 @@ def _recover_asr(
     """Reload Whisper after its device was lost and return the new model (or None).
 
     First the same device is reloaded (an NPU reset is often transient). With ``auto``,
-    the other devices follow: CPU first while the translator holds the GPU, else GPU then
-    CPU. An explicit device never moves, matching the no-silent-fallback rule."""
+    GPU then CPU follow. An explicit device never moves, matching the no-silent-fallback rule."""
     lost = failed.device.resolved or "?"
     previous = [r["to"] for r in record.asr_recoveries]
     order = [lost]
     if settings.device_preference == "auto":
-        others = ["CPU", "GPU"] if overlapping else ["GPU", "CPU"]
+        # GPU first even while it translates: large Whisper models on the CPU run several
+        # times slower, and the Lunar Lake NPU driver hang (openvino#38403) tends to recur.
+        others = ["GPU", "CPU"]
         order += [d for d in others if d != lost]
     # Each recovery moves one step down the list (the same device is retried only once).
     tried = {d: previous.count(d) for d in order}
