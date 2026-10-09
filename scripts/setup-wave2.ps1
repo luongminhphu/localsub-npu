@@ -39,7 +39,7 @@ if (-not (Test-Path $venvPython)) {
 Push-Location $worker
 try {
   & $venvPython -m pip install --upgrade pip
-  & $venvPython -m pip install -e ".[dev,openvino]"
+  & $venvPython -m pip install -c constraints.txt -e ".[dev,openvino]"
   if ($LASTEXITCODE -ne 0) { throw "pip install failed." }
 
   if (-not $env:LOCALSUB_MODEL_DIR) { $env:LOCALSUB_MODEL_DIR = Join-Path $repoRoot "data\models" }

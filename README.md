@@ -8,13 +8,13 @@
 - Sửa phụ đề trực tiếp trong bảng, xuất **SRT, VTT, TXT** và file dự án `.localsub.json`.
 - Media không bao giờ rời khỏi máy. Sau khi tải model lần đầu, không cần Internet và không cần API key.
 
-> Phiên bản hiện tại: **0.9.1 (tự phục hồi khi driver NPU bị reset giữa chừng) · 0.9.0 (Wave 7: giữ máy thức và chạy tốc độ tối đa khi xử lý, danh mục model dùng chung, thêm Qwen3.5 và Distil-Whisper)**. Có **bộ cài Windows** (không cần Python/Node/Rust) — xem
+> Phiên bản hiện tại: **0.9.2 (trả runtime OpenVINO về 2026.4.0 như 0.8.0, tắt mặc định ép tốc độ tối đa EcoQoS) · 0.9.1 (tự phục hồi khi driver NPU bị reset giữa chừng) · 0.9.0 (Wave 7: giữ máy thức và chạy tốc độ tối đa khi xử lý, danh mục model dùng chung, thêm Qwen3.5 và Distil-Whisper)**. Có **bộ cài Windows** (không cần Python/Node/Rust) — xem
 > [Cài nhanh bằng bộ cài](#cài-nhanh-bằng-bộ-cài). Muốn phát triển hoặc chạy dòng lệnh thì cài từ mã nguồn (mục 2–6).
 
 ## Cài nhanh bằng bộ cài
 
 1. Cài FFmpeg (một lần): `winget install --id Gyan.FFmpeg -e`, rồi đăng xuất/đăng nhập lại để PATH có hiệu lực.
-2. Tải file `LocalSub.NPU_0.9.1_x64-setup.exe` ở trang
+2. Tải file `LocalSub.NPU_0.9.2_x64-setup.exe` ở trang
    [Releases](https://github.com/luongminhphu/localsub-npu/releases) (hoặc artifact
    `localsub-npu-windows-installer` của workflow **Release** trong tab Actions).
 3. Chạy bộ cài. Bộ cài **chưa được ký số**, nên Windows SmartScreen có thể hiện "Windows protected your PC":
@@ -208,7 +208,7 @@ Tự đóng gói bộ cài (giống workflow Release trên GitHub):
 .\scripts\build-worker.ps1          # đóng băng worker bằng PyInstaller -> apps\inference\dist\localsub-worker\ + smoke test
 cd apps\desktop
 npx tauri build --bundles nsis --config src-tauri/tauri.bundle.conf.json
-# kết quả: apps\desktop\src-tauri\target\release\bundle\nsis\LocalSub.NPU_0.9.1_x64-setup.exe
+# kết quả: apps\desktop\src-tauri\target\release\bundle\nsis\LocalSub.NPU_0.9.2_x64-setup.exe
 ```
 
 `tauri.bundle.conf.json` chỉ dùng khi build bộ cài (thêm thư mục worker vào gói); `npm run tauri dev` không cần nó.
@@ -484,7 +484,7 @@ Từ 0.9.0, trong suốt job worker:
 | Cơ chế | Tác dụng |
 |---|---|
 | `SetThreadExecutionState(ES_CONTINUOUS \| ES_SYSTEM_REQUIRED)` | Chặn sleep do idle đến khi job xong, lỗi hoặc bị hủy; sau đó trả về chế độ bình thường |
-| Tắt power throttling (`SetProcessInformation` / `ProcessPowerThrottling`) | Worker không bị Windows 11 đưa sang EcoQoS, giữ tốc độ CPU khi app ở nền |
+| Tắt power throttling (`SetProcessInformation` / `ProcessPowerThrottling`) — **chỉ khi bật `LOCALSUB_FULL_SPEED=1`** (mặc định tắt từ 0.9.2) | Worker không bị Windows 11 đưa sang EcoQoS. Mặc định tắt vì trên Lunar Lake CPU, GPU, NPU dùng chung ngân sách điện: ép CPU chạy tối đa có thể lấy bớt điện của GPU (dịch) và NPU (nhận dạng) |
 | Tùy chọn giữ màn hình sáng | `--keep-display-on` hoặc `LOCALSUB_KEEP_DISPLAY_ON=1`; mặc định cho màn hình tắt (máy vẫn chạy) để tiết kiệm điện |
 
 - Bật/tắt bằng ô **Giữ máy thức khi xử lý** trong *Cấu hình* (mặc định bật, app nhớ lựa chọn). Dòng lệnh: `--allow-sleep` để tắt; biến `LOCALSUB_KEEP_AWAKE=0` cũng tắt.
@@ -537,6 +537,7 @@ Cách đọc: nếu ở bước Dịch mà GPU thấp và CPU cao, model dịch 
 | `LOCALSUB_LOG_LEVEL` | `INFO` | `DEBUG`, `INFO`, `WARNING`, `ERROR` |
 | `LOCALSUB_OVERLAP` | bật | `0` tắt chạy chồng nhận dạng/dịch; `force` cho phép cả khi cùng thiết bị (chỉ để đo) |
 | `LOCALSUB_TRANSLATION_PARALLEL` | tự động (NPU: `1`) | Cố định số lô dịch mỗi lần gọi model (1–16) và tắt tự điều chỉnh. Không đặt: GPU/CPU tự chọn 4/8/16, NPU dùng 1 |
+| `LOCALSUB_FULL_SPEED` | tắt | `1` để worker không bị EcoQoS (ép CPU tốc độ tối đa); chỉ bật nếu đo thấy nhanh hơn |
 | `LOCALSUB_KEEP_AWAKE` | bật | `0` cho phép Windows sleep/hạ tốc độ worker khi đang xử lý (giống `--allow-sleep`) |
 | `LOCALSUB_KEEP_DISPLAY_ON` | tắt | `1` giữ màn hình sáng trong lúc xử lý |
 | `LOCALSUB_VLM_CACHE_GB` | `2` | Bộ nhớ cache (GB) cho model Qwen3.5 khi dịch theo lô |
@@ -644,6 +645,7 @@ CI (GitHub Actions) chạy Python lint/test, frontend lint/type-check/test/build
 7. Wave 6A: GPU tự điều chỉnh 4/8/16 lô mỗi lần, lùi mức khi lỗi bộ nhớ. ✅
 8. Wave 6B: nhận dạng (NPU) và dịch (GPU) chạy chồng theo từng đoạn, nạp model dịch song song. ✅
 9. Wave 7: giữ máy thức + tắt EcoQoS khi xử lý, danh mục model dùng chung, thêm Qwen3.5 (GPU/CPU) và Distil-Whisper EN (thử nghiệm). ✅
+10. 0.9.2: khóa runtime OpenVINO 2026.4.0 (`apps/inference/constraints.txt`, giống 0.8.0), EcoQoS opt-out thành tùy chọn. ✅
 10. Tiếp theo (backlog): đo tốc độ Qwen3.5 trên GPU Arc, chẩn đoán rõ lỗi driver NPU, preset tốc độ/chất lượng, benchmark thiết bị ngay trong app, ký số bộ cài, kèm FFmpeg trong bộ cài, tự cập nhật.
 
 ## Giấy phép

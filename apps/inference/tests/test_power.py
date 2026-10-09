@@ -41,13 +41,25 @@ class FakeKernel32:
 
 def test_keep_awake_sets_and_restores_execution_state() -> None:
     k = FakeKernel32()
-    with power.keep_awake(True, display=False, kernel32=k) as state:
+    with power.keep_awake(True, display=False, kernel32=k, full_speed=True) as state:
         assert k.awake
         assert state.keep_awake and state.throttling_disabled and not state.display_on
     assert k.states == [power.ES_CONTINUOUS | power.ES_SYSTEM_REQUIRED, power.ES_CONTINUOUS]
     info_class, control, state_mask = k.throttling_calls[0]
     assert info_class == power.PROCESS_POWER_THROTTLING
     assert control & power.THROTTLE_EXECUTION_SPEED and state_mask == 0  # throttling off
+
+
+def test_full_speed_is_off_by_default_like_v080(monkeypatch) -> None:
+    monkeypatch.delenv(power.FULL_SPEED_ENV, raising=False)
+    k = FakeKernel32()
+    with power.keep_awake(True, kernel32=k) as state:
+        assert state.keep_awake and not state.throttling_disabled
+    assert k.throttling_calls == []  # EcoQoS left to Windows, as in v0.8.0
+    monkeypatch.setenv(power.FULL_SPEED_ENV, "1")
+    with power.keep_awake(True, kernel32=k) as state:
+        assert state.throttling_disabled
+    assert len(k.throttling_calls) == 1
 
 
 def test_display_flag_and_restore_on_error() -> None:

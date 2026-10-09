@@ -101,11 +101,24 @@ def disable_power_throttling(kernel32: Any | None = None) -> bool:
         return False
 
 
+FULL_SPEED_ENV = "LOCALSUB_FULL_SPEED"
+
+
 @contextmanager
 def keep_awake(
-    enabled: bool = True, display: bool = False, kernel32: Any | None = None
+    enabled: bool = True,
+    display: bool = False,
+    kernel32: Any | None = None,
+    full_speed: bool | None = None,
 ) -> Iterator[PowerState]:
-    """Hold the PC awake for the ``with`` block (call on the job's main thread)."""
+    """Hold the PC awake for the ``with`` block (call on the job's main thread).
+
+    ``full_speed`` (EcoQoS opt-out) is off by default since 0.9.2: on Lunar Lake the CPU,
+    GPU and NPU share one power budget, so forcing the worker's CPU threads to high QoS
+    can take power from the GPU translator and the NPU. v0.8.0 never changed it.
+    Opt in with ``LOCALSUB_FULL_SPEED=1``."""
+    if full_speed is None:
+        full_speed = env_flag(FULL_SPEED_ENV, False)
     if not enabled:
         yield PowerState(reason="disabled")
         return
@@ -118,7 +131,7 @@ def keep_awake(
         previous = kernel32.SetThreadExecutionState(flags)
     except (AttributeError, OSError, TypeError, ValueError):
         previous = 0
-    throttling = disable_power_throttling(kernel32)
+    throttling = disable_power_throttling(kernel32) if full_speed else False
     state = PowerState(
         keep_awake=bool(previous),
         display_on=bool(previous) and display,

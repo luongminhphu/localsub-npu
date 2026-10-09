@@ -31,7 +31,7 @@ try {
     }
   }
   & $Python -m pip install --upgrade pip | Out-Null
-  & $Python -m pip install ".[openvino]" "pyinstaller>=6.16,<7"
+  & $Python -m pip install -c constraints.txt ".[openvino]" "pyinstaller>=6.16,<7"
   if ($LASTEXITCODE -ne 0) { throw "pip install failed" }
 
   & $Python -m PyInstaller --noconfirm --clean --log-level WARN `
