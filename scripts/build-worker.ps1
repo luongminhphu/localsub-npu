@@ -49,6 +49,25 @@ try {
   $models = & $exe models list | Out-String
   if ($LASTEXITCODE -ne 0 -or $models -notmatch "whisper-small-int8") { throw "models list failed" }
 
+  Write-Host "Smoke test: analyze + MCP server (stdio)"
+  $analysis = & $exe analyze --limit 5 | Out-String
+  if ($LASTEXITCODE -ne 0 -or $analysis -notmatch '"status"') { throw "analyze failed" }
+  $requests = @(
+    '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{}}}',
+    '{"jsonrpc":"2.0","method":"notifications/initialized"}',
+    '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"localsub_diagnostics","arguments":{}}}',
+    '{"jsonrpc":"2.0","id":3,"method":"server/discover","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}'
+  ) -join "`n"
+  $mcpOut = $requests | & $exe mcp 2>$null
+  if ($LASTEXITCODE -ne 0) { throw "mcp server exited with $LASTEXITCODE" }
+  $lines = @($mcpOut | Where-Object { $_.Trim() })
+  if ($lines.Count -ne 3) { throw "mcp: expected 3 responses, got $($lines.Count): $($lines -join ' | ')" }
+  foreach ($line in $lines) {
+    $msg = $line | ConvertFrom-Json  # throws if anything else leaked onto stdout
+    if (-not $msg.result) { throw "mcp error response: $line" }
+  }
+  Write-Host "MCP ok: $((($lines[0] | ConvertFrom-Json).result.serverInfo.version))"
+
   $size = (Get-ChildItem -Recurse (Split-Path $exe) | Measure-Object Length -Sum).Sum / 1MB
   Write-Host ("Frozen worker ready: {0} ({1:N0} MB)" -f (Split-Path $exe), $size) -ForegroundColor Green
 }
