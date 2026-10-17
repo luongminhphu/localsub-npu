@@ -252,3 +252,37 @@ textarea { min-width: 160px; padding: 4px 8px; font-size: 0.88rem; }
 @container (max-width: 860px) { .model-groups { grid-template-columns: 1fr; gap: 8px; } }
 @container (max-width: 640px) { .monitor-legend { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 1100px) and (min-width: 881px) { .workspace { grid-template-columns: 280px minmax(0, 1fr); } dl { grid-template-columns: 1fr; } }
+
+/* Analysis (AI) tab */
+.analysis h3 { margin: 0 0 4px; font-size: 1rem; }
+.severity-summary { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0; }
+.sev-pill { border-radius: 999px; font-size: 0.74rem; font-weight: 700; padding: 2px 9px; white-space: nowrap; background: rgba(148, 163, 184, 0.14); color: #cbd5e1; }
+.sev-pill.high { background: rgba(239, 68, 68, 0.18); color: #fca5a5; }
+.sev-pill.medium { background: rgba(245, 158, 11, 0.18); color: #fcd34d; }
+.sev-pill.low { background: rgba(56, 189, 248, 0.16); color: #7dd3fc; }
+.sev-pill.info { background: rgba(148, 163, 184, 0.14); color: #cbd5e1; }
+.sev-pill.zero { opacity: 0.55; }
+.ok-text { color: #86efac; margin: 8px 0; }
+.findings { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.finding { border: 1px solid #263552; border-left: 4px solid #475569; border-radius: 10px; padding: 10px 12px; background: rgba(15, 23, 42, 0.55); }
+.finding.high { border-left-color: #ef4444; }
+.finding.medium { border-left-color: #f59e0b; }
+.finding.low { border-left-color: #38bdf8; }
+.finding p { margin: 6px 0 0; line-height: 1.5; overflow-wrap: anywhere; }
+.finding-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.finding-id { font-size: 0.74rem; color: #94a3b8; }
+.finding-rec span { color: #a7f3d0; font-weight: 700; }
+.finding details { margin-top: 6px; }
+.finding summary { cursor: pointer; color: #93c5fd; font-size: 0.85rem; }
+.evidence, .mcp-config { background: #0b1222; border: 1px solid #22304b; border-radius: 8px; padding: 10px; font-size: 0.78rem; max-height: 240px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; color: #dbe5f5; margin: 8px 0 0; }
+.stage-table { margin-top: 14px; }
+.stage-table caption { text-align: left; color: #a8b4c8; font-size: 0.85rem; padding-bottom: 6px; }
+.mcp-box { margin-top: 18px; border-top: 1px solid #22304b; padding-top: 14px; }
+.mcp-clients { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 4px; }
+.mcp-clients button { background: #1e2a44; color: #dce7f8; border: 1px solid #354767; padding: 6px 12px; font-weight: 600; }
+.mcp-clients button.on { background: #0e7490; border-color: #22d3ee; color: #ecfeff; }
+.mcp-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.mcp-actions button { padding: 8px 14px; }
+.finding-id { background: transparent; padding: 0; border: 0; font-size: 0.74rem; color: #94a3b8; }
+.analysis .mcp-privacy { margin-top: 14px; }
+.stage-table th { white-space: nowrap; }

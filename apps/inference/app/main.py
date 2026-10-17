@@ -7,7 +7,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
-from app import history, model_store, power, translation, whisper
+from app import analysis, history, mcp_server, model_store, power, translation, whisper
 from app.audit import to_jsonable
 from app.config import Settings, load_env_file
 from app.diagnostics import build_diagnostic_report
@@ -34,6 +34,16 @@ def _formats(value: str) -> tuple[str, ...]:
     return items
 
 
+def _limit(value: str) -> int:
+    try:
+        number = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("limit must be an integer") from exc
+    if not 1 <= number <= analysis.MAX_LIMIT:
+        raise argparse.ArgumentTypeError(f"limit must be between 1 and {analysis.MAX_LIMIT}")
+    return number
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="LocalSub NPU local worker")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -53,6 +63,19 @@ def build_parser() -> argparse.ArgumentParser:
 
     hist = sub.add_parser("history", help="Show recent jobs from the local audit log")
     hist.add_argument("--limit", type=int, default=20)
+
+    an = sub.add_parser("analyze", help="Find performance problems in the local job log")
+    an.add_argument("--limit", type=_limit, default=analysis.DEFAULT_LIMIT)
+    an.add_argument("--format", choices=["json", "markdown"], default="json")
+    an.add_argument("--language", choices=["vi", "en"], default="vi", help="markdown language")
+    an.add_argument(
+        "--redact", action="store_true", help="Hide media paths (default for the MCP server)"
+    )
+
+    mcp = sub.add_parser("mcp", help="Run the read-only MCP server on stdio for AI assistants")
+    mcp.add_argument(
+        "--no-redact", action="store_true", help="Show real media file names to the AI client"
+    )
 
     tr = sub.add_parser("transcribe", help="Generate subtitles from local media")
     tr.add_argument("source", type=Path)
@@ -309,6 +332,17 @@ def main(argv: list[str] | None = None) -> int:
                 history.recent_jobs(settings.output_dir / "logs" / "jobs.jsonl", args.limit)
             )
             return 0
+        if args.command == "analyze":
+            report = analysis.analyze(
+                settings.output_dir / "logs" / "jobs.jsonl", args.limit, redact=args.redact
+            )
+            if args.format == "markdown":
+                print(analysis.optimization_plan(report, args.language), end="", flush=True)
+            else:
+                _print_json(report)
+            return 0
+        if args.command == "mcp":
+            return mcp_server.serve(settings, redact=not args.no_redact)
         if args.command == "transcribe":
             return _cmd_transcribe(args, settings)
         if args.command == "translate":

@@ -3,6 +3,7 @@
  * a deterministic preview worker is used so the interface can be reviewed without Windows.
  */
 import type {
+  AnalysisReport,
   Diagnostics,
   DownloadEvent,
   DownloadHandlers,
@@ -10,6 +11,7 @@ import type {
   JobHistory,
   MetricsSnapshot,
   LocalSubProject,
+  McpLaunch,
   ModelInfo,
   WorkerEvent,
 } from "./types";
@@ -38,6 +40,8 @@ export interface WorkerBridge {
   cancelDownload(): Promise<boolean>;
   removeModel(modelId: string): Promise<void>;
   history(limit: number): Promise<JobHistory>;
+  analyze(limit: number): Promise<AnalysisReport>;
+  mcpConfig(): Promise<McpLaunch>;
   systemMetrics(sinceMs: number | null): Promise<MetricsSnapshot>;
   confirm(message: string, title: string): Promise<boolean>;
 }
@@ -154,6 +158,8 @@ async function tauriBridge(): Promise<WorkerBridge> {
       await invoke<string>("remove_model", { modelId });
     },
     history: async (limit) => JSON.parse(await invoke<string>("job_history", { limit })) as JobHistory,
+    analyze: async (limit) => JSON.parse(await invoke<string>("analyze_performance", { limit })) as AnalysisReport,
+    mcpConfig: () => invoke<McpLaunch>("mcp_config"),
     systemMetrics: (sinceMs) => invoke<MetricsSnapshot>("system_metrics", { sinceMs }),
     confirm: (message, title) => dialog.ask(message, { title, kind: "warning" }),
   };
@@ -200,6 +206,99 @@ function previewHistory(): JobHistory {
     jobs,
     skipped_lines: 0,
     stats: { total: 3, completed: 2, failed: 1, npu_share: 0.5, fallbacks: 1, median_rtf: 0.147 },
+  };
+}
+
+function previewAnalysis(): AnalysisReport {
+  const now = Date.now();
+  const iso = (minutesAgo: number) => new Date(now - minutesAgo * 60_000).toISOString();
+  return {
+    generated_at: new Date(now).toISOString(),
+    log_path: "data/output/logs/jobs.jsonl",
+    log_found: true,
+    skipped_lines: 0,
+    jobs_analyzed: 3,
+    newest_job_at: iso(12),
+    oldest_job_at: iso(1440),
+    status: "issues",
+    severity_counts: { high: 1, medium: 2, low: 1 },
+    stats: {
+      jobs: 3,
+      completed: 2,
+      failed: 1,
+      stages: {
+        extract: { median_ms: 4_100, max_ms: 235_000 },
+        load_model: { median_ms: 9_800, max_ms: 14_200 },
+        load_translation_model: { median_ms: 210_000, max_ms: 410_000 },
+        inference: { median_ms: 66_400, max_ms: 90_000 },
+        translation: { median_ms: 96_000, max_ms: 141_000 },
+        total: { median_ms: 169_000, max_ms: 240_000 },
+      },
+    },
+    findings: [
+      {
+        id: "slow_translation_model_load",
+        severity: "high",
+        category: "load",
+        title: { vi: "Nạp model dịch chậm", en: "Slow translation model load" },
+        detail: {
+          vi: "2/2 lần nạp model dịch qwen3-8b-int4-cw trên NPU chậm hơn 60.0s, lâu nhất 410.0s. Nạp chậm lặp lại nghĩa là bộ đệm biên dịch (.ov-cache) không được dùng lại.",
+          en: "2/2 loads of translation model qwen3-8b-int4-cw on NPU exceeded 60.0s, worst 410.0s. Repeated slow loads mean the compile cache (.ov-cache) is not being reused.",
+        },
+        recommendation: {
+          vi: "Kiểm tra CACHE_DIR có được truyền khi compile và thư mục .ov-cache có ghi được; cân nhắc nạp model dịch song song với bước tách audio/nhận dạng.",
+          en: "Check CACHE_DIR is passed at compile time and .ov-cache is writable; consider loading the translator in parallel with audio extraction/ASR.",
+        },
+        job_ids: ["a1", "a3"],
+        evidence: { model: "qwen3-8b-int4-cw", device: "NPU", loads_ms: [410_000, 395_000] },
+        code_refs: ["app/translation.py:load_translator", "app/devices.py:compile_with_fallback"],
+      },
+      {
+        id: "slow_audio_extraction",
+        severity: "medium",
+        category: "io",
+        title: { vi: "Tách audio chậm", en: "Slow audio extraction" },
+        detail: {
+          vi: "1 job tách audio mất hơn 2% thời lượng video (lâu nhất 235.0s); 1 job đọc từ đường dẫn mạng (UNC).",
+          en: "1 job spent over 2% of the media duration extracting audio (worst 235.0s); 1 read from a network (UNC) path.",
+        },
+        recommendation: {
+          vi: "Chép video về ổ SSD cục bộ trước khi xử lý.",
+          en: "Copy media to a local SSD first.",
+        },
+        job_ids: ["a3"],
+        evidence: {},
+        code_refs: ["app/audio.py:extract_audio"],
+      },
+      {
+        id: "device_fallback",
+        severity: "medium",
+        category: "load",
+        title: { vi: "Không chạy được trên thiết bị ưu tiên", en: "Preferred device not used" },
+        detail: {
+          vi: "1 lần phải chuyển thiết bị (ví dụ NPU → GPU/CPU) khi nạp model.",
+          en: "1 model load fell back to another device (e.g. NPU -> GPU/CPU).",
+        },
+        recommendation: { vi: "Đọc fallback_reason và kiểm tra driver NPU.", en: "Read fallback_reason and check the NPU driver." },
+        job_ids: ["a3"],
+        evidence: {},
+        code_refs: ["app/devices.py:compile_with_fallback"],
+      },
+      {
+        id: "overlap_idle",
+        severity: "low",
+        category: "translation",
+        title: { vi: "Dịch chồng không có tác dụng", en: "Overlap translation did nothing" },
+        detail: {
+          vi: "1 job bật dịch chồng nhưng không dịch được dòng nào trong lúc nhận dạng.",
+          en: "1 job enabled overlap translation but translated no lines while ASR was running.",
+        },
+        recommendation: { vi: "Kiểm tra stable_lines.", en: "Check stable_lines." },
+        job_ids: ["a1"],
+        evidence: {},
+        code_refs: ["app/jobs.py:OverlapTranslation"],
+      },
+    ],
   };
 }
 
@@ -329,6 +428,18 @@ function previewBridge(): WorkerBridge {
       installed.delete(modelId);
     },
     history: async () => previewHistory(),
+    analyze: async () => previewAnalysis(),
+    mcpConfig: async () => ({
+      command: "C:\\Program Files\\LocalSub NPU\\worker\\localsub-worker.exe",
+      args: ["mcp"],
+      cwd: "C:\\Program Files\\LocalSub NPU\\worker",
+      env: {
+        LOCALSUB_MODEL_DIR: "C:\\Users\\you\\AppData\\Local\\com.luongminhphu.localsubnpu\\models",
+        LOCALSUB_OUTPUT_DIR: "C:\\Users\\you\\AppData\\Local\\com.luongminhphu.localsubnpu\\output",
+        PYTHONUTF8: "1",
+      },
+      bundled: true,
+    }),
     systemMetrics: async (sinceMs) => previewMetrics(sinceMs),
     confirm: async (message) => window.confirm(message),
   };

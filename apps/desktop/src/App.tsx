@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { AnalysisPanel } from "./components/AnalysisPanel";
 import { HistoryPanel } from "./components/HistoryPanel";
 import { ModelManager } from "./components/ModelManager";
 import { MonitorPanel, type StageMarker } from "./components/MonitorPanel";
@@ -50,8 +51,8 @@ const DEVICES: Array<{ value: DevicePreference; label: string }> = [
   { value: "CPU", label: "CPU" },
 ];
 const TRANSLATION_DEVICES: Array<{ value: TranslationDevice; label: string }> = DEVICES;
-type Tab = "editor" | "monitor" | "history" | "models";
-const TABS: Tab[] = ["editor", "monitor", "history", "models"];
+type Tab = "editor" | "monitor" | "history" | "analysis" | "models";
+const TABS: Tab[] = ["editor", "monitor", "history", "analysis", "models"];
 const JA_WEAK_MODELS = new Set(["whisper-tiny-int8", "whisper-base-int8", "whisper-small-int8"]);
 const FORMATS: ExportFormat[] = ["srt", "vtt", "txt", "json"];
 const STEPS: WorkerStage[] = [
@@ -563,6 +564,9 @@ export function App() {
         </div>
         <div className="tab-body" role="tabpanel" id="panel-history" aria-labelledby="tab-history" hidden={tab !== "history"}>
           <HistoryPanel bridge={bridge} refreshKey={historyKey} />
+        </div>
+        <div className="tab-body" role="tabpanel" id="panel-analysis" aria-labelledby="tab-analysis" hidden={tab !== "analysis"}>
+          <AnalysisPanel bridge={bridge} refreshKey={historyKey} active={tab === "analysis"} />
         </div>
         <div className="tab-body" role="tabpanel" id="panel-models" aria-labelledby="tab-models" hidden={tab !== "models"}>
       <ModelManager
