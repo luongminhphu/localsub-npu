@@ -126,7 +126,8 @@ FRAME_SECONDS = 0.1
 SILENCE_PEAK = 0.003  # ~-50 dBFS: nothing Whisper could transcribe, only hallucinate on
 
 ProgressSink = Callable[[int, int], None]
-ChunkSink = Callable[[tuple[TimedText, ...], str | None], None]
+# (segments so far, language, where the next audio piece starts in ms)
+ChunkSink = Callable[[tuple[TimedText, ...], str | None, int], None]
 # Called with the model that failed and the chunk start (ms) after the device was lost;
 # returns a freshly loaded model to retry the chunk with, or None to give up.
 Recover = Callable[["LoadedModel", int], "LoadedModel | None"]
@@ -210,8 +211,9 @@ def transcribe(
 ) -> TranscriptionResult:
     """Transcribe chunk by chunk; ``on_progress(done_ms, total_ms)`` after each chunk.
 
-    ``on_chunk(segments_so_far, detected_language)`` also runs after each chunk so a
-    consumer (the overlapping translator) can start on finished lines.
+    ``on_chunk(segments_so_far, detected_language, horizon_ms)`` also runs after each chunk
+    so a consumer (the overlapping translator) can start on finished lines; ``horizon_ms``
+    is where the next piece starts, so no later segment can start before it.
 
     If the device is lost mid-run, ``recover`` supplies a new model and the failed chunk is
     retried; finished chunks are kept, so a 2-hour video does not restart from zero."""
@@ -269,7 +271,8 @@ def transcribe(
             if not chunks and getattr(result, "texts", None):
                 segments.append(TimedText(offset_ms, None, " ".join(result.texts)))
         if on_chunk:
-            on_chunk(tuple(segments), language if language != "auto" else detected)
+            horizon_ms = int(round(stop * 1000 / SAMPLE_RATE))
+            on_chunk(tuple(segments), language if language != "auto" else detected, horizon_ms)
         if on_progress:
             on_progress(min(total_ms, int(round(stop * 1000 / SAMPLE_RATE))), total_ms)
     inference_ms = int((time.perf_counter() - started) * 1000)

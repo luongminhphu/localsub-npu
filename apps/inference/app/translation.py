@@ -529,6 +529,15 @@ class LineFeed:
             self._closed = True
             self._cond.notify_all()
 
+    def cut(self, count: int) -> None:
+        """Drop lines from ``count`` on and close: they changed after being queued. A
+        consumer already past ``count`` stops at its next wait; callers keep only the
+        first ``count`` results."""
+        with self._cond:
+            del self._lines[max(0, count) :]
+            self._closed = True
+            self._cond.notify_all()
+
     def abort(self) -> None:
         with self._cond:
             self._aborted = self._closed = True
