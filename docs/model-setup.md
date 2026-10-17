@@ -68,6 +68,13 @@ VI → EN with better quality) use `--translate-to`:
 4. Task Manager > Performance > NPU 0 shows utilization during the NPU run.
 5. No network traffic during transcription after the model download.
 
+## Korean source (0.10.0)
+
+- Speech language `ko`; translation directions ko→en, ko→vi (targets stay `en`/`vi`).
+- Recommended Whisper: `whisper-large-v3-turbo-int8` (or `whisper-medium-int8`).
+- Korean cues split on words (Korean uses spaces), max 36 characters, reading-speed estimate 85 ms/char (Netflix Korean guide: 2 x 16 chars, 12 cps).
+- The prompt adds a Korean rule (sentences span lines and drop subjects; one output line per input line; render honorifics/speech levels naturally; keep names). No romanized examples: Qwen3 0.6B copied them into every line.
+
 ## Japanese source (0.4.0)
 
 - Speech languages: `auto`, `en`, `vi`, `ja`. Translation directions: en↔vi, ja→en, ja→vi (targets are `en`/`vi` only).

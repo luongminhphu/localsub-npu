@@ -6,6 +6,8 @@ import {
   deleteCue,
   initialJob,
   isCjk,
+  isHangul,
+  MAX_CUE_CHARS_KO,
   isProject,
   jobReducer,
   maxCharsFor,
@@ -154,6 +156,9 @@ describe("Japanese cue limits", () => {
     expect(isCjk("Xin chào các bạn")).toBe(false);
     expect(maxCharsFor("決算")).toBe(MAX_CUE_CHARS_CJK);
     expect(maxCharsFor("Hello")).toBe(MAX_CUE_CHARS);
+    expect(isHangul("오늘 회의를 시작하겠습니다")).toBe(true);
+    expect(isCjk("오늘 회의를 시작하겠습니다")).toBe(false);
+    expect(maxCharsFor("오늘 회의를 시작하겠습니다")).toBe(MAX_CUE_CHARS_KO);
   });
 
   it("warns on long Japanese source but not on the same length of Latin text", () => {

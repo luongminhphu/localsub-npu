@@ -15,8 +15,14 @@ MS_PER_CHAR = 70  # ~15 characters per second reading speed
 # Japanese has no spaces and denser characters: ~2 lines x 16 full-width chars, ~7 chars/s.
 MAX_CUE_CHARS_CJK = 32
 MS_PER_CHAR_CJK = 150
+# Korean separates words with spaces, so cues still split on words, but Hangul syllables are
+# dense: Netflix's Korean guide allows 2 lines x 16 characters (spaces count 0.5) and up to
+# 12 characters per second for adults.
+MAX_CUE_CHARS_KO = 36
+MS_PER_CHAR_KO = 85
 
 _CJK = re.compile(r"[\u3040-\u30ff\u31f0-\u31ff\u3400-\u4dbf\u4e00-\u9fff\uff66-\uff9f]")
+_HANGUL = re.compile(r"[\u1100-\u11ff\u3130-\u318f\uac00-\ud7a3]")
 # In Japanese, Whisper often separates sentences with a plain space instead of 。
 _BREAK_AFTER = re.compile(r"(?:[.!?;:,。、！？…」』）]|^\s)$")
 
@@ -27,8 +33,24 @@ def is_cjk(text: str) -> bool:
     return bool(dense) and len(_CJK.findall(dense)) >= 0.3 * len(dense)
 
 
+def is_hangul(text: str) -> bool:
+    """True when at least 30% of non-space characters are Hangul (Korean)."""
+    dense = text.replace(" ", "")
+    return bool(dense) and len(_HANGUL.findall(dense)) >= 0.3 * len(dense)
+
+
 def max_chars_for(text: str, default: int = MAX_CUE_CHARS) -> int:
-    return min(default, MAX_CUE_CHARS_CJK) if is_cjk(text) else default
+    if is_cjk(text):
+        return min(default, MAX_CUE_CHARS_CJK)
+    if is_hangul(text):
+        return min(default, MAX_CUE_CHARS_KO)
+    return default
+
+
+def ms_per_char_for(text: str) -> int:
+    if is_cjk(text):
+        return MS_PER_CHAR_CJK
+    return MS_PER_CHAR_KO if is_hangul(text) else MS_PER_CHAR
 
 
 @dataclass(frozen=True)
@@ -108,7 +130,7 @@ def build_cues(
         end = seg.end_ms
         if end is None or end <= seg.start_ms:
             next_start = cleaned[i + 1].start_ms if i + 1 < len(cleaned) else None
-            per_char = MS_PER_CHAR_CJK if is_cjk(seg.text) else MS_PER_CHAR
+            per_char = ms_per_char_for(seg.text)
             estimate = max(MIN_ESTIMATED_MS, per_char * len(seg.text))
             fallback = seg.start_ms + min(MAX_CUE_MS, estimate)
             end = next_start if next_start and next_start > seg.start_ms else fallback

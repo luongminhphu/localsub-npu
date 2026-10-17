@@ -3,18 +3,18 @@
 Ứng dụng desktop Windows 11 tạo phụ đề cho video/audio **hoàn toàn offline**, ưu tiên chạy trên **Intel NPU**
 (Intel AI Boost) qua OpenVINO, tự chuyển sang GPU/CPU khi cần và ghi lại lý do.
 
-- Nhận dạng giọng nói **tiếng Việt / tiếng Anh / tiếng Nhật** bằng Whisper (OpenVINO GenAI).
-- Dịch phụ đề **Anh ↔ Việt**, **Nhật → Anh**, **Nhật → Việt** bằng mô hình ngôn ngữ chạy trên máy (Qwen INT4), giữ nguyên mốc thời gian.
+- Nhận dạng giọng nói **tiếng Việt / tiếng Anh / tiếng Nhật / tiếng Hàn** bằng Whisper (OpenVINO GenAI).
+- Dịch phụ đề **Anh ↔ Việt**, **Nhật → Anh/Việt**, **Hàn → Anh/Việt** bằng mô hình ngôn ngữ chạy trên máy (Qwen INT4), giữ nguyên mốc thời gian.
 - Sửa phụ đề trực tiếp trong bảng, xuất **SRT, VTT, TXT** và file dự án `.localsub.json`.
 - Media không bao giờ rời khỏi máy. Sau khi tải model lần đầu, không cần Internet và không cần API key.
 
-> Phiên bản hiện tại: **0.9.2 (trả runtime OpenVINO về 2026.4.0 như 0.8.0, tắt mặc định ép tốc độ tối đa EcoQoS) · 0.9.1 (tự phục hồi khi driver NPU bị reset giữa chừng) · 0.9.0 (Wave 7: giữ máy thức và chạy tốc độ tối đa khi xử lý, danh mục model dùng chung, thêm Qwen3.5 và Distil-Whisper)**. Có **bộ cài Windows** (không cần Python/Node/Rust) — xem
+> Phiên bản hiện tại: **0.10.0 (thêm tiếng Hàn: nhận dạng và dịch Hàn → Việt/Anh) · 0.9.2 (trả runtime OpenVINO về 2026.4.0 như 0.8.0, tắt mặc định ép tốc độ tối đa EcoQoS) · 0.9.1 (tự phục hồi khi driver NPU bị reset giữa chừng) · 0.9.0 (Wave 7: giữ máy thức và chạy tốc độ tối đa khi xử lý, danh mục model dùng chung, thêm Qwen3.5 và Distil-Whisper)**. Có **bộ cài Windows** (không cần Python/Node/Rust) — xem
 > [Cài nhanh bằng bộ cài](#cài-nhanh-bằng-bộ-cài). Muốn phát triển hoặc chạy dòng lệnh thì cài từ mã nguồn (mục 2–6).
 
 ## Cài nhanh bằng bộ cài
 
 1. Cài FFmpeg (một lần): `winget install --id Gyan.FFmpeg -e`, rồi đăng xuất/đăng nhập lại để PATH có hiệu lực.
-2. Tải file `LocalSub.NPU_0.9.2_x64-setup.exe` ở trang
+2. Tải file `LocalSub.NPU_0.10.0_x64-setup.exe` ở trang
    [Releases](https://github.com/luongminhphu/localsub-npu/releases) (hoặc artifact
    `localsub-npu-windows-installer` của workflow **Release** trong tab Actions).
 3. Chạy bộ cài. Bộ cài **chưa được ký số**, nên Windows SmartScreen có thể hiện "Windows protected your PC":
@@ -208,7 +208,7 @@ Tự đóng gói bộ cài (giống workflow Release trên GitHub):
 .\scripts\build-worker.ps1          # đóng băng worker bằng PyInstaller -> apps\inference\dist\localsub-worker\ + smoke test
 cd apps\desktop
 npx tauri build --bundles nsis --config src-tauri/tauri.bundle.conf.json
-# kết quả: apps\desktop\src-tauri\target\release\bundle\nsis\LocalSub.NPU_0.9.2_x64-setup.exe
+# kết quả: apps\desktop\src-tauri\target\release\bundle\nsis\LocalSub.NPU_0.10.0_x64-setup.exe
 ```
 
 `tauri.bundle.conf.json` chỉ dùng khi build bộ cài (thêm thư mục worker vào gói); `npm run tauri dev` không cần nó.
@@ -241,7 +241,7 @@ Tên nút trong tài liệu dưới đây ghi theo giao diện tiếng Việt, k
 
 | Mục | Chọn |
 |---|---|
-| **Ngôn ngữ nói** | Ngôn ngữ trong video: Tiếng Việt, Tiếng Anh, Tiếng Nhật hoặc Tự nhận diện |
+| **Ngôn ngữ nói** | Ngôn ngữ trong video: Tiếng Việt, Tiếng Anh, Tiếng Nhật, Tiếng Hàn hoặc Tự nhận diện |
 | **Model nhận dạng · thiết bị** | Model Whisper và thiết bị (Tự động, NPU, GPU, CPU) |
 | **Dịch sang** | Không dịch, hoặc ngôn ngữ đích (Việt/Anh) để tạo thêm bản dịch |
 | **Model dịch · thiết bị** | Model dịch và thiết bị (hiện khi có chọn dịch) |
@@ -268,7 +268,7 @@ Hiện phiên bản OpenVINO, FFmpeg, danh sách thiết bị khả dụng, thi�
 - Sửa trực tiếp cột thời gian (**Bắt đầu**, **Kết thúc**, định dạng `hh:mm:ss,mmm`), **Gốc** và **Bản dịch**.
 - **Tách**: tách câu làm đôi tại điểm giữa. **Gộp**: gộp với câu kế tiếp. **Xóa**: xóa câu.
 - Ứng dụng kiểm tra liên tục: thời gian chồng nhau, End trước Start, câu trống, câu dài hơn 84 ký tự
-  (tiếng Nhật: 32 ký tự).
+  (tiếng Nhật: 32 ký tự; tiếng Hàn: 36 ký tự).
   Lỗi nghiêm trọng sẽ chặn nút xuất; dòng có lỗi được tô màu.
 - Nhãn **chưa lưu** cho biết có thay đổi chưa xuất.
 
@@ -323,11 +323,11 @@ Tham số `transcribe.ps1`:
 | Tham số | Mặc định | Giá trị |
 |---|---|---|
 | `-Source` | (bắt buộc) | Đường dẫn video/audio |
-| `-Language` | `auto` | `auto`, `vi`, `en`, `ja` |
+| `-Language` | `auto` | `auto`, `vi`, `en`, `ja`, `ko` |
 | `-Task` | `transcribe` | `transcribe`, hoặc `translate` (Whisper → tiếng Anh) |
 | `-Device` | `auto` | `auto`, `NPU`, `GPU`, `CPU` cho Whisper |
 | `-Model` | `whisper-small-int8` | Model Whisper |
-| `-TranslateTo` | (không) | `vi` hoặc `en` — thêm bản dịch bằng model dịch (tiếng Nhật chỉ là ngôn ngữ nguồn) |
+| `-TranslateTo` | (không) | `vi` hoặc `en` — thêm bản dịch bằng model dịch (tiếng Nhật, tiếng Hàn chỉ là ngôn ngữ nguồn) |
 | `-TranslationModel` | `qwen3-8b-int4-cw` | Model dịch |
 | `-TranslationDevice` | `auto` | Thiết bị cho model dịch |
 | `-Formats` | `srt` | Danh sách `srt,vtt,txt,json` |
@@ -410,6 +410,13 @@ số câu dịch lỗi (`translation_fallback_lines`) và mã lỗi — **không
 **Về Qwen3.5 (thử nghiệm):** Intel chỉ phát hành Qwen3.5 dạng model ảnh + chữ (VLM). App chỉ nạp phần ngôn ngữ qua `ContinuousBatchingPipeline` (không chạy phần xử lý ảnh), vẫn dịch nhiều lô một lần như Qwen3. Cần OpenVINO GenAI 2026.4 trở lên; chưa hỗ trợ NPU. Đo trong sandbox CPU với 79 câu (bản 0.8B, chỉ để so sánh tương đối): dịch đúng tiếng Việt ở các câu mà Qwen3 0.6B để nguyên tiếng Anh, nhưng **chậm hơn** (124 s so với 46 s của Qwen3 0.6B, 127 s của Qwen3 1.7B). Chưa đo trên GPU Arc: hãy chạy thử một video ngắn và so cột RTF tổng trong Lịch sử trước khi dùng thay Qwen3 8B.
 
 **Thêm model mới:** toàn bộ model nằm trong một danh mục `apps/inference/app/catalog.py` (id, repo Hugging Face, dung lượng, cách nạp `whisper`/`llm`/`vlm`, thiết bị chạy được, ngôn ngữ, gợi ý tiếng Việt/Anh). Worker, lệnh `models list` và giao diện đều đọc từ đây, nên thêm một model OpenVINO đã chuyển đổi sẵn chỉ cần thêm một mục, không phải sửa giao diện hay Rust.
+
+### Tiếng Hàn (0.10.0)
+
+- Chọn **Tiếng Hàn** (hoặc `-Language ko`) khi biết chắc video tiếng Hàn; *Tự nhận diện* cũng nhận đúng `ko`. Tên file: `<tên>.ko.srt`.
+- Nên dùng `whisper-large-v3-turbo-int8` (hoặc `medium`); app cảnh báo khi chọn tiny/base/small cho tiếng Hàn.
+- Tiếng Hàn có khoảng trắng giữa các từ nên phụ đề vẫn **cắt theo từ**, nhưng tối đa 36 ký tự/câu (theo [hướng dẫn phụ đề tiếng Hàn của Netflix](https://partnerhelp.netflixstudios.com/hc/en-us/articles/216001127-Korean-Timed-Text-Style-Guide): 2 dòng × 16 ký tự, khoảng trắng tính 0,5) và ước lượng tốc độ đọc 85 ms/ký tự (~12 ký tự/giây).
+- Dịch Hàn → Anh/Việt: nên dùng `qwen3-8b-int4-cw` hoặc `qwen3-4b-int4`. Prompt có quy tắc riêng: câu tiếng Hàn hay bị chia qua nhiều dòng và lược chủ ngữ, model dùng ngữ cảnh nhưng giữ **một dòng dịch cho mỗi dòng gốc**, chuyển kính ngữ/cấp độ lịch sự cho tự nhiên, giữ tên người và công ty. Model rất nhỏ (Qwen3 0.6B) dịch tiếng Hàn kém, nhiều dòng giữ nguyên bản gốc.
 
 ### Tiếng Nhật
 
@@ -646,6 +653,7 @@ CI (GitHub Actions) chạy Python lint/test, frontend lint/type-check/test/build
 8. Wave 6B: nhận dạng (NPU) và dịch (GPU) chạy chồng theo từng đoạn, nạp model dịch song song. ✅
 9. Wave 7: giữ máy thức + tắt EcoQoS khi xử lý, danh mục model dùng chung, thêm Qwen3.5 (GPU/CPU) và Distil-Whisper EN (thử nghiệm). ✅
 10. 0.9.2: khóa runtime OpenVINO 2026.4.0 (`apps/inference/constraints.txt`, giống 0.8.0), EcoQoS opt-out thành tùy chọn. ✅
+11. 0.10.0: tiếng Hàn là ngôn ngữ nói (nhận dạng `ko`, dịch Hàn → Việt/Anh, cắt câu theo chuẩn phụ đề tiếng Hàn). ✅
 10. Tiếp theo (backlog): đo tốc độ Qwen3.5 trên GPU Arc, chẩn đoán rõ lỗi driver NPU, preset tốc độ/chất lượng, benchmark thiết bị ngay trong app, ký số bộ cài, kèm FFmpeg trong bộ cài, tự cập nhật.
 
 ## Giấy phép

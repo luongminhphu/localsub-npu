@@ -3,6 +3,8 @@ import type { JobView, LocalSubProject, ProjectCue, WorkerEvent } from "./types"
 export const MAX_CUE_CHARS = 84;
 /** Japanese: ~2 lines x 16 full-width characters (mirrors the worker's segmentation). */
 export const MAX_CUE_CHARS_CJK = 32;
+/** Korean: word-separated but dense Hangul, ~2 lines x 16 characters plus spaces. */
+export const MAX_CUE_CHARS_KO = 36;
 
 const CJK = /[\u3040-\u30ff\u31f0-\u31ff\u3400-\u4dbf\u4e00-\u9fff\uff66-\uff9f]/g;
 
@@ -11,8 +13,16 @@ export function isCjk(text: string): boolean {
   return dense.length > 0 && (dense.match(CJK)?.length ?? 0) >= 0.3 * dense.length;
 }
 
+const HANGUL = /[\u1100-\u11ff\u3130-\u318f\uac00-\ud7a3]/g;
+
+export function isHangul(text: string): boolean {
+  const dense = text.replace(/ /g, "");
+  return dense.length > 0 && (dense.match(HANGUL)?.length ?? 0) >= 0.3 * dense.length;
+}
+
 export function maxCharsFor(text: string): number {
-  return isCjk(text) ? MAX_CUE_CHARS_CJK : MAX_CUE_CHARS;
+  if (isCjk(text)) return MAX_CUE_CHARS_CJK;
+  return isHangul(text) ? MAX_CUE_CHARS_KO : MAX_CUE_CHARS;
 }
 
 export interface CueIssue {
