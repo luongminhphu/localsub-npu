@@ -54,7 +54,10 @@ fn run_to_string(args: &[String], stdin: Option<&str>) -> Result<String, String>
 
 /// Latest CPU/GPU/NPU samples newer than `since_ms`; starts the sampler on first call.
 #[tauri::command]
-fn system_metrics(monitor: State<'_, metrics::Monitor>, since_ms: Option<u64>) -> metrics::Snapshot {
+fn system_metrics(
+    monitor: State<'_, metrics::Monitor>,
+    since_ms: Option<u64>,
+) -> metrics::Snapshot {
     monitor.snapshot(since_ms)
 }
 
@@ -210,6 +213,23 @@ async fn job_history(limit: u32) -> Result<String, String> {
     .map_err(|e| e.to_string())?
 }
 
+/// Performance findings over the last `limit` jobs (local UI: real file names, not redacted).
+#[tauri::command]
+async fn analyze_performance(limit: u32) -> Result<String, String> {
+    let limit = limit.clamp(1, 200).to_string();
+    tauri::async_runtime::spawn_blocking(move || {
+        run_to_string(&["analyze".into(), "--limit".into(), limit], None)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Launch command for external MCP clients; read-only, nothing is started here.
+#[tauri::command]
+fn mcp_config() -> Result<worker::McpLaunch, String> {
+    worker::mcp_config()
+}
+
 #[tauri::command]
 async fn export_project(
     project_json: String,
@@ -269,6 +289,8 @@ fn main() {
             cancel_download,
             remove_model,
             job_history,
+            analyze_performance,
+            mcp_config,
             export_project,
             load_project
         ])

@@ -219,3 +219,51 @@ export interface MetricsSnapshot {
   error: string | null;
   samples: MetricSample[];
 }
+
+export type Severity = "high" | "medium" | "low" | "info";
+
+export interface Localized {
+  vi: string;
+  en: string;
+}
+
+/** One rule hit from the worker's `analyze` command (also served to AI clients over MCP). */
+export interface Finding {
+  id: string;
+  severity: Severity;
+  category: string;
+  title: Localized;
+  detail: Localized;
+  recommendation: Localized;
+  job_ids: string[];
+  evidence: Record<string, unknown>;
+  code_refs: string[];
+}
+
+export interface AnalysisReport {
+  generated_at: string;
+  log_path: string;
+  log_found: boolean;
+  skipped_lines: number;
+  jobs_analyzed: number;
+  newest_job_at: string | null;
+  oldest_job_at: string | null;
+  status: "ok" | "issues" | "no_data";
+  findings: Finding[];
+  severity_counts?: Partial<Record<Severity, number>>;
+  stats: {
+    jobs: number;
+    completed: number;
+    failed: number;
+    stages: Record<string, { median_ms: number; max_ms: number }>;
+  };
+}
+
+/** How an external MCP client launches the read-only server (from the Rust `mcp_config`). */
+export interface McpLaunch {
+  command: string;
+  args: string[];
+  cwd: string;
+  env: Record<string, string>;
+  bundled: boolean;
+}

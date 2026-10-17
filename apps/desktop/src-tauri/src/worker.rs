@@ -204,6 +204,48 @@ pub fn command(location: &WorkerLocation, args: &[String]) -> Command {
     cmd
 }
 
+/// How an MCP client (Claude Desktop, VS Code, ...) should launch the read-only MCP server:
+/// the same worker the app uses, with `mcp` as the only argument and explicit data folders so
+/// the server reads the same `jobs.jsonl` as the app.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct McpLaunch {
+    pub command: PathBuf,
+    pub args: Vec<String>,
+    pub cwd: PathBuf,
+    pub env: std::collections::BTreeMap<String, String>,
+    pub bundled: bool,
+}
+
+pub fn mcp_launch(location: &WorkerLocation, app_data: Option<&Path>) -> McpLaunch {
+    let mut env: std::collections::BTreeMap<String, String> = data_dir_defaults(location, app_data)
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), v.to_string_lossy().into_owned()))
+        .collect();
+    env.insert("PYTHONUTF8".into(), "1".into());
+    let mut args = Vec::new();
+    if !location.bundled {
+        // Source mode: `python -m app.main` needs the worker folder importable from any cwd.
+        env.insert(
+            "PYTHONPATH".into(),
+            location.worker_dir.to_string_lossy().into_owned(),
+        );
+        args.extend(["-m".to_string(), "app.main".to_string()]);
+    }
+    args.push("mcp".into());
+    McpLaunch {
+        command: location.python.clone(),
+        args,
+        cwd: location.worker_dir.clone(),
+        env,
+        bundled: location.bundled,
+    }
+}
+
+pub fn mcp_config() -> Result<McpLaunch, String> {
+    let location = locate()?;
+    Ok(mcp_launch(&location, app_paths().data_dir.as_deref()))
+}
+
 fn allowed(field: &str, value: &str, list: &[&str]) -> Result<(), String> {
     if list.contains(&value) {
         Ok(())
@@ -470,6 +512,42 @@ mod tests {
         );
         let text = String::from_utf8_lossy(&out.stdout);
         assert!(text.contains("whisper-small-int8") && text.contains("qwen3-8b-int4-cw"));
+    }
+
+    #[test]
+    fn mcp_launch_bundled_uses_worker_exe_and_app_data() {
+        let root = fake_bundle("localsub-mcp-bundle-test");
+        let exe = bundled_worker(&root).expect("bundled worker");
+        let location = WorkerLocation {
+            python: exe.clone(),
+            worker_dir: exe.parent().unwrap().to_path_buf(),
+            bundled: true,
+        };
+        let data = std::env::temp_dir().join("localsub-mcp-data");
+        let launch = mcp_launch(&location, Some(&data));
+        assert_eq!(launch.command, exe);
+        assert_eq!(launch.args, vec!["mcp".to_string()]);
+        assert!(launch.bundled);
+        if env::var_os("LOCALSUB_OUTPUT_DIR").is_none() {
+            let out = launch.env.get("LOCALSUB_OUTPUT_DIR").expect("output dir");
+            assert!(out.ends_with("output"), "{out}");
+        }
+        assert!(!launch.env.contains_key("PYTHONPATH"));
+    }
+
+    #[test]
+    fn mcp_launch_source_mode_runs_module() {
+        let location = WorkerLocation {
+            python: PathBuf::from("python"),
+            worker_dir: PathBuf::from("repo").join("apps").join("inference"),
+            bundled: false,
+        };
+        let launch = mcp_launch(&location, None);
+        assert_eq!(launch.args, vec!["-m", "app.main", "mcp"]);
+        assert_eq!(
+            launch.env.get("PYTHONPATH").map(String::as_str),
+            location.worker_dir.to_str()
+        );
     }
 
     #[test]

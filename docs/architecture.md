@@ -107,3 +107,17 @@ Cancel terminates the worker process. Temporary WAVs from killed jobs are pruned
 `app/translation.py` loads an OpenVINO GenAI `LLMPipeline` through the same NPU → GPU → CPU
 fallback as Whisper (`app/devices.py`). Batches of 8 numbered cues are translated with greedy
 decoding; the parser maps `N. text` lines back to cue indexes so timing is never touched by the model.
+
+### Performance analysis and MCP (0.11.0)
+
+`app/analysis.py` reads the tail of `jobs.jsonl` (max 200 records, torn lines skipped) and applies
+rule-based checks (slow model loads, ASR RTF regressions, slow extraction, translation bottlenecks,
+device fallbacks/losses, failure rate, OpenVINO changes). Each finding has bilingual text, evidence
+and `code_refs`. The desktop tab calls `analyze` through the Rust `analyze_performance` command.
+
+`app/mcp_server.py` is a dependency-free, read-only MCP server on stdio (`app.main mcp`). It speaks
+2026-07-28 (`server/discover`, per-request `_meta` protocol version, `resultType`, `ttlMs`/`cacheScope`,
+`-32022` for unsupported versions) and the legacy `initialize` handshake. The real stdout is
+duplicated for the protocol and fd 1 is pointed at stderr, so native libraries cannot corrupt the
+stream. Paths are redacted by default. The Rust `mcp_config` command returns the launch command
+(`localsub-worker.exe mcp` or `python -m app.main mcp`) plus the data-folder environment.

@@ -51,3 +51,6 @@ def test_version_chip_matches_package_versions() -> None:
         (desktop / "src" / "lib" / "i18n.ts").read_text(encoding="utf-8"),
     )
     assert chips == [version, version]
+    import app
+
+    assert app.__version__ == version  # reported to MCP clients as serverInfo.version

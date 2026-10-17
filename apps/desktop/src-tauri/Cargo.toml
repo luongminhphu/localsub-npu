@@ -1,6 +1,6 @@
 [package]
 name = "localsub-npu"
-version = "0.10.0"
+version = "0.11.0"
 description = "Offline local subtitle generation with Intel NPU preference"
 authors = ["Minh Phu Luong"]
 edition = "2021"

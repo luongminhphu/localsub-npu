@@ -8,13 +8,13 @@
 - Sửa phụ đề trực tiếp trong bảng, xuất **SRT, VTT, TXT** và file dự án `.localsub.json`.
 - Media không bao giờ rời khỏi máy. Sau khi tải model lần đầu, không cần Internet và không cần API key.
 
-> Phiên bản hiện tại: **0.10.0 (thêm tiếng Hàn: nhận dạng và dịch Hàn → Việt/Anh) · 0.9.2 (trả runtime OpenVINO về 2026.4.0 như 0.8.0, tắt mặc định ép tốc độ tối đa EcoQoS) · 0.9.1 (tự phục hồi khi driver NPU bị reset giữa chừng) · 0.9.0 (Wave 7: giữ máy thức và chạy tốc độ tối đa khi xử lý, danh mục model dùng chung, thêm Qwen3.5 và Distil-Whisper)**. Có **bộ cài Windows** (không cần Python/Node/Rust) — xem
+> Phiên bản hiện tại: **0.11.0 (tab Phân tích (AI) và MCP server chỉ đọc để trợ lý AI phân tích hiệu suất, log) · 0.10.0 (thêm tiếng Hàn: nhận dạng và dịch Hàn → Việt/Anh) · 0.9.2 (trả runtime OpenVINO về 2026.4.0 như 0.8.0, tắt mặc định ép tốc độ tối đa EcoQoS) · 0.9.1 (tự phục hồi khi driver NPU bị reset giữa chừng) · 0.9.0 (Wave 7: giữ máy thức và chạy tốc độ tối đa khi xử lý, danh mục model dùng chung, thêm Qwen3.5 và Distil-Whisper)**. Có **bộ cài Windows** (không cần Python/Node/Rust) — xem
 > [Cài nhanh bằng bộ cài](#cài-nhanh-bằng-bộ-cài). Muốn phát triển hoặc chạy dòng lệnh thì cài từ mã nguồn (mục 2–6).
 
 ## Cài nhanh bằng bộ cài
 
 1. Cài FFmpeg (một lần): `winget install --id Gyan.FFmpeg -e`, rồi đăng xuất/đăng nhập lại để PATH có hiệu lực.
-2. Tải file `LocalSub.NPU_0.10.0_x64-setup.exe` ở trang
+2. Tải file `LocalSub.NPU_0.11.0_x64-setup.exe` ở trang
    [Releases](https://github.com/luongminhphu/localsub-npu/releases) (hoặc artifact
    `localsub-npu-windows-installer` của workflow **Release** trong tab Actions).
 3. Chạy bộ cài. Bộ cài **chưa được ký số**, nên Windows SmartScreen có thể hiện "Windows protected your PC":
@@ -208,7 +208,7 @@ Tự đóng gói bộ cài (giống workflow Release trên GitHub):
 .\scripts\build-worker.ps1          # đóng băng worker bằng PyInstaller -> apps\inference\dist\localsub-worker\ + smoke test
 cd apps\desktop
 npx tauri build --bundles nsis --config src-tauri/tauri.bundle.conf.json
-# kết quả: apps\desktop\src-tauri\target\release\bundle\nsis\LocalSub.NPU_0.10.0_x64-setup.exe
+# kết quả: apps\desktop\src-tauri\target\release\bundle\nsis\LocalSub.NPU_0.11.0_x64-setup.exe
 ```
 
 `tauri.bundle.conf.json` chỉ dùng khi build bộ cài (thêm thư mục worker vào gói); `npm run tauri dev` không cần nó.
@@ -293,6 +293,83 @@ RTF tổng = tổng thời gian job (nạp model, nhận dạng, dịch) / thờ
 sang màu vàng khi dữ liệu cũ hơn 2 phút. Lịch sử chỉ chứa metadata — không có nội dung phụ đề hay đường dẫn đầy đủ.
 Dòng lệnh tương đương: `python -m app.main history --limit 20`.
 
+### Phân tích hiệu suất và tích hợp AI qua MCP (0.11.0)
+
+Tab **Phân tích (AI)** đọc 50 job gần nhất trong `jobs.jsonl` và áp dụng các quy tắc phát hiện điểm chưa tối ưu.
+Mỗi phát hiện có mức độ (Cao / Trung bình / Thấp / Thông tin), giải thích bằng số liệu, đề xuất, các job liên quan
+và **hàm trong mã nguồn** cần xem (ví dụ `app/devices.py:compile_with_fallback`). Đầu tab ghi giờ phân tích (giờ máy,
+kèm múi giờ) và thời điểm job mới nhất, để biết dữ liệu mới hay cũ. Bấm **Phân tích lại** sau khi chạy job mới.
+
+| Mã phát hiện | Khi nào xuất hiện |
+|---|---|
+| `slow_asr_model_load` / `slow_translation_model_load` | Nạp Whisper > 30 s hoặc model dịch > 60 s (hoặc ≥ 3 lần trung vị cùng model/thiết bị). Lặp lại nhiều lần → mức Cao: bộ đệm `.ov-cache` không được dùng lại |
+| `asr_rtf_regression` | Job mới nhất nhận dạng chậm ≥ 1,5 lần trung vị các job trước (cùng model, thiết bị; cần ≥ 3 job) |
+| `slow_audio_extraction` | Tách audio > 2% thời lượng video (và > 20 s), thường do đọc từ ổ mạng/UNC |
+| `translation_bottleneck` | Phần dịch sau khi nhận dạng xong chiếm > 50% tổng thời gian |
+| `translation_fallback_lines` | > 10% số dòng phải giữ nguyên bản gốc |
+| `overlap_idle` | Bật dịch chồng nhưng không dịch được dòng nào trong lúc nhận dạng |
+| `device_fallback` | Phải chuyển thiết bị khi nạp model (ví dụ NPU → GPU) |
+| `npu_device_lost` | Gặp `ZE_RESULT_ERROR_DEVICE_LOST` (có phục hồi hoặc job lỗi) |
+| `failed_jobs` | ≥ 20% job thất bại (ít nhất 2 job) |
+| `power_not_applied` | Không giữ được máy thức |
+| `openvino_version_changed` | Log có nhiều phiên bản OpenVINO; so RTF theo từng phiên bản |
+
+**Kết nối trợ lý AI (MCP).** Worker có sẵn một [MCP](https://modelcontextprotocol.io/specification/2026-07-28) server
+**chỉ đọc**, chạy qua stdio: `localsub-worker.exe mcp` (bản cài) hoặc `python -m app.main mcp` (mã nguồn). Server hỗ trợ
+phiên bản giao thức 2026-07-28 (`server/discover`) và cả handshake `initialize` cũ (2025-11-25, 2025-06-18, 2025-03-26).
+Trong tab, chọn ứng dụng AI (Claude Desktop, VS Code hoặc Khác), bấm **Sao chép cấu hình** rồi dán vào:
+
+- Claude Desktop: `claude_desktop_config.json` (Settings → Developer → Edit Config), khởi động lại Claude.
+- VS Code: `.vscode/mcp.json` của workspace, bấm Start trên server `localsub-npu`.
+
+Cấu hình đã có sẵn đường dẫn worker và thư mục dữ liệu (`LOCALSUB_OUTPUT_DIR`, `LOCALSUB_MODEL_DIR`) nên AI đọc đúng
+nhật ký của app. Ví dụ (bản cài):
+
+```json
+{
+  "mcpServers": {
+    "localsub-npu": {
+      "command": "C:\\Program Files\\LocalSub NPU\\worker\\localsub-worker.exe",
+      "args": ["mcp"],
+      "env": {
+        "LOCALSUB_MODEL_DIR": "C:\\Users\\<bạn>\\AppData\\Local\\com.luongminhphu.localsubnpu\\models",
+        "LOCALSUB_OUTPUT_DIR": "C:\\Users\\<bạn>\\AppData\\Local\\com.luongminhphu.localsubnpu\\output",
+        "PYTHONUTF8": "1"
+      }
+    }
+  }
+}
+```
+
+Công cụ (tool) AI được dùng:
+
+| Tool | Nội dung |
+|---|---|
+| `localsub_diagnostics` | FFmpeg, OpenVINO, thiết bị NPU/GPU/CPU, model đã cài, có `.ov-cache` hay chưa, giờ job cuối |
+| `localsub_list_jobs` | Danh sách job (lọc `limit`, `state`, `since`): model, thiết bị, thời gian từng bước, RTF, phiên bản OpenVINO |
+| `localsub_get_job` | Toàn bộ bản ghi một job: các bước kèm thời điểm, thiết bị đã thử, lý do chuyển, phục hồi, lỗi |
+| `localsub_analyze_performance` | Các phát hiện như trong tab, kèm thống kê theo bước và theo model |
+| `localsub_compare_jobs` | So sánh hai job từng bước (ví dụ trước/sau khi cập nhật) |
+| `localsub_models` | Danh mục model và trạng thái cài |
+| `localsub_optimization_plan` | Bản tóm tắt Markdown cho AI lập trình: phát hiện → bằng chứng → hàm cần sửa → quy trình test và mở pull request |
+
+Ngoài ra có resource `localsub://jobs/recent`, `localsub://analysis/latest`, `localsub://catalog` và prompt
+`optimize_localsub` (tham số `focus`: load, asr, translation, io, all), `diagnose_job` (`job_id`).
+
+**Tự động hóa tối ưu code.** Nút **Sao chép prompt cho AI** tạo sẵn yêu cầu cho trợ lý AI có quyền truy cập repo (ví dụ
+Claude Code, VS Code Copilot agent): gọi phân tích, chọn điểm quan trọng nhất, xem bằng chứng, đọc các hàm trong
+`code_refs`, viết test tái hiện, sửa trên nhánh mới, chạy `ruff` + `pytest` rồi **mở pull request** — AI không tự merge.
+Sau khi cài bản mới, gọi lại `localsub_compare_jobs` để xác nhận cải thiện bằng job thật.
+
+**Quyền riêng tư và giới hạn:**
+
+- MCP server chỉ đọc `jobs.jsonl`, chẩn đoán và danh mục model; không chạy job, không tải/xóa model, không mở cổng mạng.
+- Mặc định tên file và đường dẫn được ẩn với AI (`media-<mã băm>.mp4`, thư mục người dùng thành `~`). Thêm
+  `--no-redact` vào `args` nếu muốn AI thấy tên file thật. Tab trong app luôn hiện tên thật vì chỉ hiển thị trên máy.
+- Nhật ký không có nội dung phụ đề, nên AI không đọc được lời thoại. Nội dung tool trả về sẽ được gửi tới dịch vụ AI bạn dùng.
+- Ổ mạng ánh xạ (ví dụ `Z:`) trông như ổ cục bộ trong log, nên quy tắc tách audio chậm chỉ nhận ra chắc chắn đường dẫn UNC `\\máy\thư-mục`.
+- Dòng lệnh tương đương: `python -m app.main analyze --limit 50` (JSON) hoặc `--format markdown --language vi`.
+
 ---
 
 ## 8. Sử dụng bằng dòng lệnh
@@ -353,6 +430,13 @@ $py = ".\.venv\Scripts\python.exe"
 # Dịch phụ đề tiếng Nhật sang tiếng Việt hoặc tiếng Anh (kết quả: D:\seminar.vi.srt)
 & $py -m app.main translate D:\seminar.ja.srt --from ja --to vi --formats srt
 & $py -m app.main translate D:\seminar.ja.srt --from ja --to en --formats srt
+
+# Phân tích hiệu suất từ nhật ký job (JSON, hoặc Markdown cho AI)
+& $py -m app.main analyze --limit 50
+& $py -m app.main analyze --format markdown --language vi --redact
+
+# MCP server chỉ đọc cho trợ lý AI (stdio; thường do ứng dụng AI tự chạy)
+& $py -m app.main mcp
 
 # Xuất lại từ project JSON đã sửa
 & $py -m app.main export --input D:\talk.localsub.json --output-base D:\final\talk --formats srt,vtt,txt
@@ -636,6 +720,7 @@ CI (GitHub Actions) chạy Python lint/test, frontend lint/type-check/test/build
 - Ứng dụng desktop chỉ mở các lệnh được cho phép; mọi giá trị (ngôn ngữ, thiết bị, model, định dạng) được kiểm tra trong Rust
   trước khi chạy worker bằng mảng tham số. Quyền Tauri giới hạn ở `core:default` và `dialog:default`.
 - Nhật ký không chứa nội dung phụ đề. Không đưa video, model, token hay mật khẩu vào repository.
+- MCP server (0.11.0) chỉ đọc, chạy qua stdio (không mở cổng), mặc định ẩn tên file và đường dẫn khỏi trợ lý AI.
 
 ---
 
@@ -654,7 +739,8 @@ CI (GitHub Actions) chạy Python lint/test, frontend lint/type-check/test/build
 9. Wave 7: giữ máy thức + tắt EcoQoS khi xử lý, danh mục model dùng chung, thêm Qwen3.5 (GPU/CPU) và Distil-Whisper EN (thử nghiệm). ✅
 10. 0.9.2: khóa runtime OpenVINO 2026.4.0 (`apps/inference/constraints.txt`, giống 0.8.0), EcoQoS opt-out thành tùy chọn. ✅
 11. 0.10.0: tiếng Hàn là ngôn ngữ nói (nhận dạng `ko`, dịch Hàn → Việt/Anh, cắt câu theo chuẩn phụ đề tiếng Hàn). ✅
-10. Tiếp theo (backlog): đo tốc độ Qwen3.5 trên GPU Arc, chẩn đoán rõ lỗi driver NPU, preset tốc độ/chất lượng, benchmark thiết bị ngay trong app, ký số bộ cài, kèm FFmpeg trong bộ cài, tự cập nhật.
+12. 0.11.0: tab Phân tích (AI) và MCP server chỉ đọc (log, chẩn đoán, phân tích hiệu suất, kế hoạch tối ưu cho AI lập trình). ✅
+13. Tiếp theo (backlog): MCP giai đoạn 2 (chạy benchmark/đổi cấu hình có xác nhận, transport HTTP nếu cần), tăng tốc nạp model, đo tốc độ Qwen3.5 trên GPU Arc, chẩn đoán rõ lỗi driver NPU, preset tốc độ/chất lượng, benchmark thiết bị ngay trong app, ký số bộ cài, kèm FFmpeg trong bộ cài, tự cập nhật.
 
 ## Giấy phép
 
