@@ -58,7 +58,10 @@ try {
     '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"localsub_diagnostics","arguments":{}}}',
     '{"jsonrpc":"2.0","id":3,"method":"server/discover","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}'
   ) -join "`n"
-  $mcpOut = $requests | & $exe mcp 2>$null
+  # Windows PowerShell 5.1 turns native stderr into errors under "Stop"; the server logs to stderr.
+  $previous = $ErrorActionPreference
+  $ErrorActionPreference = "Continue"
+  try { $mcpOut = $requests | & $exe mcp 2>$null } finally { $ErrorActionPreference = $previous }
   if ($LASTEXITCODE -ne 0) { throw "mcp server exited with $LASTEXITCODE" }
   $lines = @($mcpOut | Where-Object { $_.Trim() })
   if ($lines.Count -ne 3) { throw "mcp: expected 3 responses, got $($lines.Count): $($lines -join ' | ')" }
