@@ -4,6 +4,7 @@ import { useI18n, type MessageKey } from "../lib/i18n";
 import { countBySeverity, dataAgeMs, MCP_CLIENTS, mcpConfigJson, sortFindings, type McpClient } from "../lib/mcp";
 import type { AnalysisReport, McpLaunch, Severity } from "../lib/types";
 import type { WorkerBridge } from "../lib/worker";
+import { PerplexityConnect } from "./PerplexityConnect";
 
 const LIMIT = 50;
 const SEVERITIES: Severity[] = ["high", "medium", "low", "info"];
@@ -71,7 +72,8 @@ export function AnalysisPanel(props: { bridge: WorkerBridge | null; refreshKey: 
   const counts = countBySeverity(findings);
   const age = dataAgeMs(report, now);
   const generated = report ? new Date(report.generated_at) : null;
-  const config = launch ? mcpConfigJson(launch, client) : "";
+  const isPerplexity = client === "perplexity";
+  const config = launch && !isPerplexity ? mcpConfigJson(launch, client) : "";
   const prompt = t("analysis.aiPrompt");
 
   const copy = async (target: string, text: string) => {
@@ -186,6 +188,7 @@ export function AnalysisPanel(props: { bridge: WorkerBridge | null; refreshKey: 
             <p className="help-text">{t("analysis.mcpIntro")}</p>
             <p className="help-text">
               {t("analysis.mcpStatus", {
+                transport: isPerplexity ? "Streamable HTTP" : "stdio",
                 mode: launch ? (launch.bundled ? t("analysis.mcpBundled") : t("analysis.mcpSource")) : "—",
               })}
             </p>
@@ -208,21 +211,36 @@ export function AnalysisPanel(props: { bridge: WorkerBridge | null; refreshKey: 
                 </button>
               ))}
             </div>
-            <p className="help-text">{t(`analysis.where.${client}` as MessageKey)}</p>
-            <pre className="mcp-config" aria-label={t("analysis.mcpConfig")} tabIndex={0}>
-              {config}
-            </pre>
-            <div className="mcp-actions">
+            {!isPerplexity && (
+              <>
+                <p className="help-text">{t(`analysis.where.${client}` as MessageKey)}</p>
+                <pre className="mcp-config" aria-label={t("analysis.mcpConfig")} tabIndex={0}>
+                  {config}
+                </pre>
+              </>
+            )}
+          </>
+        )}
+        <PerplexityConnect
+          bridge={bridge}
+          launch={launch}
+          visible={isPerplexity}
+          onCopy={(target, text) => void copy(target, text)}
+          copyLabel={copyLabel}
+        />
+        {launch && (
+          <div className="mcp-actions">
+            {!isPerplexity && (
               <button type="button" onClick={() => void copy("config", config)}>
                 {copyLabel("config", "analysis.copyConfig")}
               </button>
-              <button type="button" className="secondary" onClick={() => void copy("prompt", prompt)}>
-                {copyLabel("prompt", "analysis.copyPrompt")}
-              </button>
-            </div>
-          </>
+            )}
+            <button type="button" className="secondary" onClick={() => void copy("prompt", prompt)}>
+              {copyLabel("prompt", "analysis.copyPrompt")}
+            </button>
+          </div>
         )}
-        <p className="help-text mcp-privacy">{t("analysis.privacy")}</p>
+        {!isPerplexity && <p className="help-text mcp-privacy">{t("analysis.privacy")}</p>}
       </div>
     </section>
   );

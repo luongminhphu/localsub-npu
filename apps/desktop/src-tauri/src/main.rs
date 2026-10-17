@@ -1,5 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod mcp_http;
 mod metrics;
 mod worker;
 
@@ -19,6 +20,20 @@ struct JobState {
 #[derive(Default)]
 struct DownloadState {
     child: Arc<Mutex<Option<Child>>>,
+}
+
+/// Perplexity remote access: the worker's HTTP MCP server and the HTTPS tunnel in front of it.
+#[derive(Default)]
+struct McpHttpState {
+    server: Arc<Mutex<Option<Child>>>,
+    tunnel: Arc<Mutex<Option<Child>>>,
+}
+
+#[derive(Clone, serde::Serialize)]
+struct McpHttpStatus {
+    server: bool,
+    tunnel: bool,
+    cloudflared: Option<String>,
 }
 
 #[derive(Clone, serde::Serialize)]
@@ -264,6 +279,127 @@ fn load_project(path: String) -> Result<String, String> {
     std::fs::read_to_string(&path).map_err(|e| format!("cannot read {path}: {e}"))
 }
 
+fn slot_running(slot_ref: &Arc<Mutex<Option<Child>>>) -> bool {
+    slot_ref
+        .lock()
+        .ok()
+        .and_then(|mut slot| {
+            slot.as_mut()
+                .map(|child| matches!(child.try_wait(), Ok(None)))
+        })
+        .unwrap_or(false)
+}
+
+fn locate_cloudflared() -> Option<std::path::PathBuf> {
+    let path_var = std::env::var("PATH").ok();
+    mcp_http::find_cloudflared(path_var.as_deref(), &mcp_http::cloudflared_candidates())
+}
+
+/// Start the read-only MCP server on http://127.0.0.1:<port>/mcp (asked for confirmation in the UI).
+#[tauri::command]
+fn start_mcp_http(
+    app: AppHandle,
+    state: State<'_, McpHttpState>,
+    port: u16,
+    rotate: bool,
+) -> Result<(), String> {
+    let args = mcp_http::http_args(port, rotate, std::process::id())?;
+    spawn_streaming(
+        app,
+        &state.server,
+        args,
+        ("mcp-http-event", "mcp-http-log", "mcp-http-exit"),
+        "the MCP HTTP server is already running",
+    )
+}
+
+/// Stops the tunnel first (nothing should stay public), then the server.
+#[tauri::command]
+fn stop_mcp_http(state: State<'_, McpHttpState>) -> Result<bool, String> {
+    let tunnel = kill_slot(&state.tunnel)?;
+    let server = kill_slot(&state.server)?;
+    Ok(tunnel || server)
+}
+
+#[tauri::command]
+fn mcp_http_status(state: State<'_, McpHttpState>) -> McpHttpStatus {
+    McpHttpStatus {
+        server: slot_running(&state.server),
+        tunnel: slot_running(&state.tunnel),
+        cloudflared: locate_cloudflared().map(|p| p.to_string_lossy().into_owned()),
+    }
+}
+
+/// Cloudflare quick tunnel to the local server; emits `mcp-tunnel-event` with the public URL.
+#[tauri::command]
+fn start_tunnel(app: AppHandle, state: State<'_, McpHttpState>, port: u16) -> Result<(), String> {
+    if !slot_running(&state.server) {
+        return Err("start the MCP HTTP server first".into());
+    }
+    let exe = locate_cloudflared().ok_or(
+        "CLOUDFLARED_MISSING: install it with `winget install --id Cloudflare.cloudflared`",
+    )?;
+    let mut slot = state.tunnel.lock().map_err(|_| "tunnel lock poisoned")?;
+    if let Some(child) = slot.as_mut() {
+        if child.try_wait().map_err(|e| e.to_string())?.is_none() {
+            return Err("the HTTPS tunnel is already running".into());
+        }
+    }
+    let mut child = mcp_http::cloudflared_command(&exe, port)?
+        .spawn()
+        .map_err(|e| format!("failed to start cloudflared: {e}"))?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or("cloudflared stdout unavailable")?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or("cloudflared stderr unavailable")?;
+    *slot = Some(child);
+
+    let out_app = app.clone();
+    thread::spawn(move || {
+        for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+            if let Some(url) = mcp_http::parse_tunnel_url(&line) {
+                let _ = out_app.emit("mcp-tunnel-event", url);
+            }
+        }
+    });
+    let shared = Arc::clone(&state.tunnel);
+    thread::spawn(move || {
+        // cloudflared logs (including the URL banner) go to stderr
+        for line in BufReader::new(stderr).lines().map_while(Result::ok) {
+            if let Some(url) = mcp_http::parse_tunnel_url(&line) {
+                let _ = app.emit("mcp-tunnel-event", url);
+            }
+            let _ = app.emit("mcp-tunnel-log", line);
+        }
+        let status = shared
+            .lock()
+            .ok()
+            .and_then(|mut guard| guard.take())
+            .and_then(|mut child| child.wait().ok());
+        let payload = match status {
+            Some(s) => ExitPayload {
+                code: s.code(),
+                cancelled: false,
+            },
+            None => ExitPayload {
+                code: None,
+                cancelled: true,
+            },
+        };
+        let _ = app.emit("mcp-tunnel-exit", payload);
+    });
+    Ok(())
+}
+
+#[tauri::command]
+fn stop_tunnel(state: State<'_, McpHttpState>) -> Result<bool, String> {
+    kill_slot(&state.tunnel)
+}
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -278,6 +414,7 @@ fn main() {
         .manage(JobState::default())
         .manage(DownloadState::default())
         .manage(metrics::Monitor::default())
+        .manage(McpHttpState::default())
         .invoke_handler(tauri::generate_handler![
             worker_location,
             system_metrics,
@@ -291,9 +428,22 @@ fn main() {
             job_history,
             analyze_performance,
             mcp_config,
+            start_mcp_http,
+            stop_mcp_http,
+            mcp_http_status,
+            start_tunnel,
+            stop_tunnel,
             export_project,
             load_project
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running LocalSub NPU");
+        .build(tauri::generate_context!())
+        .expect("error while building LocalSub NPU")
+        .run(|app, event| {
+            if let tauri::RunEvent::Exit = event {
+                // Never leave a public tunnel or the HTTP server running after the app closes.
+                let state = app.state::<McpHttpState>();
+                let _ = kill_slot(&state.tunnel);
+                let _ = kill_slot(&state.server);
+            }
+        });
 }

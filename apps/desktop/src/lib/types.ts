@@ -267,3 +267,54 @@ export interface McpLaunch {
   env: Record<string, string>;
   bundled: boolean;
 }
+
+/** Status line from `mcp --http --events` (the worker's Streamable HTTP MCP server). */
+export interface McpHttpServerEvent {
+  type: "mcp_http";
+  state: "listening" | "stopped" | "error";
+  url?: string;
+  port?: number;
+  token?: string;
+  token_source?: "env" | "file" | "new";
+  token_path?: string;
+  audit_log?: string;
+  redact?: boolean;
+  at?: string;
+  code?: string;
+  message?: string;
+}
+
+/** One audited HTTP request (no key, no tool arguments). */
+export interface McpHttpRequestEvent {
+  type: "mcp_http_request";
+  ts: string;
+  http: string;
+  method: string | null;
+  name: string | null;
+  status: number;
+  auth: "ok" | "failed" | "skipped";
+  duration_ms: number;
+  client_ip?: string;
+  user_agent?: string;
+}
+
+export type McpHttpEvent = McpHttpServerEvent | McpHttpRequestEvent;
+
+export interface McpHttpStatus {
+  server: boolean;
+  tunnel: boolean;
+  /** Path of cloudflared.exe when installed, otherwise null. */
+  cloudflared: string | null;
+}
+
+export interface McpHttpHandlers {
+  onEvent: (event: McpHttpEvent) => void;
+  onLog: (line: string) => void;
+  onExit: (code: number | null, cancelled: boolean) => void;
+}
+
+export interface TunnelHandlers {
+  onUrl: (url: string) => void;
+  onLog: (line: string) => void;
+  onExit: (code: number | null, cancelled: boolean) => void;
+}

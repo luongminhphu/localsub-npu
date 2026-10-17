@@ -121,3 +121,19 @@ and `code_refs`. The desktop tab calls `analyze` through the Rust `analyze_perfo
 duplicated for the protocol and fd 1 is pointed at stderr, so native libraries cannot corrupt the
 stream. Paths are redacted by default. The Rust `mcp_config` command returns the launch command
 (`localsub-worker.exe mcp` or `python -m app.main mcp`) plus the data-folder environment.
+
+### Remote MCP for Perplexity (0.12.0)
+
+Perplexity only connects to remote MCP servers over HTTPS. `app/mcp_http.py` serves the same
+`LocalSubMcp` dispatcher over Streamable HTTP (stdlib `ThreadingHTTPServer`, loopback only):
+POST `/mcp`, JSON responses, 202 for notifications, 405 for GET/DELETE, header validation
+(`MCP-Protocol-Version`, `Mcp-Method`, `Mcp-Name`, `-32020`), no session ids. Every request needs the
+API key from `<data>/mcp/http-token` (or `LOCALSUB_MCP_TOKEN`); Origin is validated; body, request and
+failed-auth limits apply; each request is appended to `logs/mcp_http.jsonl`. With `--events` the
+worker prints a `listening` line (URL + key) and one line per request on stdout for the UI, and
+`--parent-pid` stops it when the desktop app exits.
+
+The Rust side (`src/mcp_http.rs`, `main.rs`) keeps two child slots in `McpHttpState`: the worker
+(`start_mcp_http` / `stop_mcp_http`) and `cloudflared tunnel --url http://127.0.0.1:<port>`
+(`start_tunnel` / `stop_tunnel`), whose stderr is parsed for the `https://*.trycloudflare.com` URL.
+Both are killed on `RunEvent::Exit`.
