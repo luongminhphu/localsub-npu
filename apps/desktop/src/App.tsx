@@ -338,6 +338,7 @@ export function App() {
                 <option value="auto">{t("config.auto")}</option>
                 <option value="en">{t("lang.en")}</option>
                 <option value="ja">{t("lang.ja")}</option>
+                <option value="ko">{t("lang.ko")}</option>
                 <option value="vi">{t("lang.vi")}</option>
               </select>
             </div>
@@ -370,6 +371,7 @@ export function App() {
             )}
             {!asrDeviceOk && <p className="error" role="alert">{t("config.deviceOnly", { model: asrChoice?.label ?? model, devices: asrChoice?.devices.join("/") ?? "" })}</p>}
             {language === "ja" && JA_WEAK_MODELS.has(model) && <p className="warn">{t("config.jaWarn")}</p>}
+            {language === "ko" && JA_WEAK_MODELS.has(model) && <p className="warn">{t("config.koWarn")}</p>}
           </div>
           {translateTo && (
             <div className="field-group">

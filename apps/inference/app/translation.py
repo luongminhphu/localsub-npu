@@ -25,8 +25,8 @@ from app.models import DeviceResolution
 # "-cw-" = channel-wise symmetric INT4, the layout recommended for Intel NPU.
 TRANSLATION_CATALOG: dict[str, str] = {m: s.repo for m, s in catalog.of_kind("translation").items()}
 DEFAULT_TRANSLATION_MODEL = "qwen3-8b-int4-cw"
-LANGUAGE_NAMES = {"en": "English", "ja": "Japanese", "vi": "Vietnamese"}
-SOURCE_LANGUAGES = ("en", "ja", "vi")
+LANGUAGE_NAMES = {"en": "English", "ja": "Japanese", "ko": "Korean", "vi": "Vietnamese"}
+SOURCE_LANGUAGES = ("en", "ja", "ko", "vi")
 TARGET_LANGUAGES = ("en", "vi")
 DEFAULT_BATCH_SIZE = 8
 CONTEXT_LINES = 2
@@ -258,6 +258,14 @@ def build_messages(
             " Japanese subtitle lines are often fragments of one sentence: use the surrounding "
             "lines to understand them, but keep one output line per input line. Drop honorifics "
             "such as -san only when unnatural, and keep Japanese personal and company names."
+        )
+    if source == "ko":
+        # No romanized examples here: small models (0.6B) copied them into every line.
+        rules += (
+            " Korean subtitle lines often split one sentence and drop the subject: use the "
+            "surrounding lines to understand them, but keep one output line per input line. "
+            "Render Korean honorifics and speech levels naturally in the target language, and "
+            "keep Korean personal and company names."
         )
     body = ""
     if context:
