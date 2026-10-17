@@ -66,6 +66,9 @@ class JobRecord:
     # NPU/GPU driver resets survived during speech recognition: at_ms, from, to, error.
     asr_recoveries: list[dict[str, Any]] = field(default_factory=list)
     translation_overlap_lines: int | None = None  # lines translated by the overlapping thread
+    # First subtitle line that changed after it was handed to the overlapping translator
+    # (None = no change). Lines from the last whole batch before it are still reused.
+    translation_overlap_diverged_at: int | None = None
     translation_tuning: list[list[float]] | None = None  # [[parallel, lines/s], ...]
     openvino_version: str | None = None
     source_duration_ms: int | None = None
@@ -125,17 +128,38 @@ def prune_stale_temp(temp_dir: Path, now: float | None = None) -> int:
 OVERLAP_RAM_FACTOR = 1.3  # free RAM needed, as a multiple of the LLM size, to load it early
 
 
-def stable_lines(segments: Sequence[TimedText], duration_ms: int | None) -> list[str]:
+def stable_lines(
+    segments: Sequence[TimedText], duration_ms: int | None, horizon_ms: int | None = None
+) -> list[str]:
     """Cue texts that later chunks cannot change.
 
     A segment's cues depend only on its own text and duration, except that a segment with
-    no end time borrows the next segment's start. So every cue before the newest segment is
-    final; the newest segment's cues are left for the next chunk (or the final pass)."""
-    starts = [s.start_ms for s in segments if normalize_text(s.text)]
-    if not starts:
+    no (or a non-positive) end time borrows the next segment's start. ``horizon_ms`` is
+    where the next audio piece begins: every later segment starts there or after it. A
+    segment is final when it starts before the horizon and either has its own end or its
+    next segment starts no later than the horizon. Whisper pads each window to 30 s, so a
+    short last window can report a start past the piece end; such a segment (and anything
+    after it) waits for the next chunk. Without a horizon the newest start is used, which
+    holds back only the newest segment."""
+    spoken = sorted(
+        ((max(0, s.start_ms), s.end_ms) for s in segments if normalize_text(s.text)),
+        key=lambda seg: seg[0],
+    )
+    if not spoken:
         return []
-    newest = max(starts)
-    return [c.text for c in build_cues(segments, duration_ms) if c.start_ms < newest]
+    horizon = spoken[-1][0] if horizon_ms is None else horizon_ms
+    cutoff: int | None = None
+    for i, (start, end) in enumerate(spoken):
+        if start >= horizon:
+            cutoff = start
+            break
+        if end is None or end <= start:
+            following = spoken[i + 1][0] if i + 1 < len(spoken) else None
+            if following is None or following > horizon:
+                cutoff = start
+                break
+    cues = build_cues(segments, duration_ms)
+    return [c.text for c in cues if cutoff is None or c.start_ms < cutoff]
 
 
 def _load_translator(
@@ -293,6 +317,7 @@ class OverlapTranslation:
         self.feed = translation.LineFeed()
         self.fed: list[str] = []
         self.diverged = False
+        self.diverged_at: int | None = None
         self.source: str | None = None
         self.language_known = threading.Event()
         self.translator: translation.LoadedTranslator | None = None
@@ -332,11 +357,14 @@ class OverlapTranslation:
 
     def offer(self, stable: list[str]) -> None:
         """Queue lines that will not change any more. If an earlier line did change (it
-        should not), stop feeding; ``finish`` translates the rest the normal way."""
+        should not), stop feeding past the last whole batch before it; ``finish`` reuses
+        that prefix and translates the rest the normal way."""
         if self.diverged:
             return
         if stable[: len(self.fed)] != self.fed:
             self.diverged = True
+            self.diverged_at = _first_difference(self.fed, stable)
+            self.feed.cut(_whole_batches(self.diverged_at))
             return
         new = stable[len(self.fed) :]
         if new:
@@ -362,8 +390,28 @@ class OverlapTranslation:
             ) from self.error
         if self.result is None:
             return 0
-        done = len(self.result.lines)
-        return done if texts[:done] == self.fed[:done] else 0
+        done = min(len(self.result.lines), len(self.fed))
+        changed = _first_difference(self.fed[:done], texts)
+        if changed < done:
+            # A batch is translated with its lines and the CONTEXT_LINES before it, so only
+            # batches that end before the first changed line match a fresh translation.
+            if self.diverged_at is None:
+                self.diverged_at = changed
+            done = _whole_batches(changed)
+        return done
+
+
+def _first_difference(old: Sequence[str], new: Sequence[str]) -> int:
+    """Index of the first line of ``old`` that ``new`` does not repeat (len(old) if none)."""
+    for i, line in enumerate(old):
+        if i >= len(new) or new[i] != line:
+            return i
+    return len(old)
+
+
+def _whole_batches(lines: int) -> int:
+    batch = translation.DEFAULT_BATCH_SIZE
+    return (lines // batch) * batch
 
 
 def _translate(
@@ -523,13 +571,15 @@ def _run_job(
                 )
                 overlap.start()
 
-        def on_chunk(segments: tuple[TimedText, ...], detected: str | None) -> None:
+        def on_chunk(
+            segments: tuple[TimedText, ...], detected: str | None, horizon_ms: int | None = None
+        ) -> None:
             if overlap is None:
                 return
             language = speech_language(detected)
             if language is not None or segments:
                 overlap.set_language(language)
-            overlap.offer(stable_lines(segments, record.source_duration_ms))
+            overlap.offer(stable_lines(segments, record.source_duration_ms, horizon_ms))
 
         transition(
             JobState.TRANSCRIBING,
@@ -614,8 +664,9 @@ def _run_job(
             if overlap is not None:
                 done = overlap.finish(texts)
                 translator = overlap.translator
-                head = overlap.result if done else None  # a diverged run is discarded
+                head = overlap.result if done else None
                 record.translation_overlap_lines = done
+                record.translation_overlap_diverged_at = overlap.diverged_at
             if done < len(texts):
                 if translator is None:
                     translator = _load_translator(

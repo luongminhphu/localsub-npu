@@ -474,9 +474,13 @@ def _rule_translation(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 ),
                 (
                     "Kiểm tra stable_lines có trả về dòng sau mỗi chunk và model dịch nạp xong "
-                    "trước khi nhận dạng kết thúc.",
+                    "trước khi nhận dạng kết thúc; overlap_diverged_at cho biết dòng phụ đề đầu "
+                    "tiên bị đổi sau khi đã đưa sang dịch (job từ 0.12.1 vẫn giữ các batch "
+                    "trước dòng đó).",
                     "Check that stable_lines yields lines after each chunk and the translator "
-                    "finishes loading before ASR ends.",
+                    "finishes loading before ASR ends; overlap_diverged_at is the first subtitle "
+                    "line that changed after it was queued (from 0.12.1 the batches before it "
+                    "are kept).",
                 ),
                 [r["job_id"] for r in idle],
                 {
@@ -486,6 +490,7 @@ def _rule_translation(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
                             "load_translation_model_ms": _timing(r, "load_translation_model"),
                             "inference_ms": _timing(r, "inference"),
                             "overlap_reason": r.get("overlap_reason"),
+                            "overlap_diverged_at": r.get("translation_overlap_diverged_at"),
                         }
                         for r in idle[:10]
                     ]
@@ -837,6 +842,7 @@ def compare_jobs(a: dict[str, Any], b: dict[str, Any]) -> dict[str, Any]:
         "translation_parallel",
         "overlap",
         "translation_overlap_lines",
+        "translation_overlap_diverged_at",
         "translation_fallback_lines",
     )
     differences = {f: {"a": a.get(f), "b": b.get(f)} for f in fields if a.get(f) != b.get(f)}

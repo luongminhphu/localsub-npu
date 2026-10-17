@@ -599,6 +599,14 @@ Mặc định Whisper chạy trên **NPU** và LLM dịch chạy trên **GPU**, 
 - Thanh tiến độ: khi đang nhận dạng, ô *Dịch* cũng sáng và hiện số câu đã dịch / số câu đã có.
 - Lịch sử: dòng dưới RTF tổng ghi `chạy chồng`; rê chuột để xem thời gian dịch còn lại sau khi nhận dạng xong. `jobs.jsonl` ghi `overlap`, `overlap_reason`, `translation_overlap_lines`, `timings_ms.translation_after_asr`.
 
+Sửa ở 0.12.1: log thật cho thấy các job "nhận dạng NPU, dịch GPU" có `translation_overlap_lines = 0`. GPU vẫn dịch trong lúc Whisper chạy, nhưng chỉ cần một câu đã đưa sang dịch bị đổi là toàn bộ kết quả bị bỏ và app dịch lại từ đầu.
+
+- **Nguyên nhân đã tái hiện được bằng test** (chưa xác nhận trên segment thật vì log không lưu segment): Whisper đệm mỗi cửa sổ lên 30 giây, nên ở cuối một đoạn 5 phút nó có thể ghi mốc thời gian vượt quá đoạn đó. Câu cuối không có mốc kết thúc khi ấy tự lấy mốc kết thúc từ câu sau. Khi đoạn kế tiếp tới, câu sau thay đổi, nên câu này bị chia lại.
+- **Cách sửa:**
+  - Một câu chỉ được coi là chắc chắn khi nó bắt đầu trước điểm đầu của đoạn kế tiếp, và có mốc kết thúc hoặc câu sau nó cũng bắt đầu trước điểm đó.
+  - Nếu vẫn có câu bị đổi, app giữ các lô 8 câu nằm trọn trước câu đó và chỉ dịch lại phần còn lại.
+  - `jobs.jsonl` ghi thêm `translation_overlap_diverged_at`: vị trí câu đầu tiên bị đổi.
+
 App **không chạy chồng** (tự quay về tuần tự và ghi lý do vào `overlap_reason`) khi:
 
 | Trường hợp | Lý do |
