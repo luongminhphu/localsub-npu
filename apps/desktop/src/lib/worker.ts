@@ -11,8 +11,12 @@ import type {
   JobHistory,
   MetricsSnapshot,
   LocalSubProject,
+  McpHttpEvent,
+  McpHttpHandlers,
+  McpHttpStatus,
   McpLaunch,
   ModelInfo,
+  TunnelHandlers,
   WorkerEvent,
 } from "./types";
 
@@ -42,6 +46,13 @@ export interface WorkerBridge {
   history(limit: number): Promise<JobHistory>;
   analyze(limit: number): Promise<AnalysisReport>;
   mcpConfig(): Promise<McpLaunch>;
+  /** Perplexity: read-only MCP over HTTP on 127.0.0.1 (returns an unsubscribe function). */
+  startMcpHttp(port: number, rotate: boolean, handlers: McpHttpHandlers): Promise<() => void>;
+  stopMcpHttp(): Promise<boolean>;
+  mcpHttpStatus(): Promise<McpHttpStatus>;
+  /** Cloudflare quick tunnel giving the local server a public HTTPS URL. */
+  startTunnel(port: number, handlers: TunnelHandlers): Promise<() => void>;
+  stopTunnel(): Promise<boolean>;
   systemMetrics(sinceMs: number | null): Promise<MetricsSnapshot>;
   confirm(message: string, title: string): Promise<boolean>;
 }
@@ -160,6 +171,49 @@ async function tauriBridge(): Promise<WorkerBridge> {
     history: async (limit) => JSON.parse(await invoke<string>("job_history", { limit })) as JobHistory,
     analyze: async (limit) => JSON.parse(await invoke<string>("analyze_performance", { limit })) as AnalysisReport,
     mcpConfig: () => invoke<McpLaunch>("mcp_config"),
+    startMcpHttp: async (port, rotate, handlers) => {
+      const unlisten = await Promise.all([
+        listen<string>("mcp-http-event", (e) => {
+          try {
+            handlers.onEvent(JSON.parse(e.payload) as McpHttpEvent);
+          } catch {
+            handlers.onLog(e.payload);
+          }
+        }),
+        listen<string>("mcp-http-log", (e) => handlers.onLog(e.payload)),
+        listen<{ code: number | null; cancelled: boolean }>("mcp-http-exit", (e) =>
+          handlers.onExit(e.payload.code, e.payload.cancelled),
+        ),
+      ]);
+      const stop = () => unlisten.forEach((fn) => fn());
+      try {
+        await invoke("start_mcp_http", { port, rotate });
+      } catch (err) {
+        stop();
+        throw err;
+      }
+      return stop;
+    },
+    stopMcpHttp: () => invoke<boolean>("stop_mcp_http"),
+    mcpHttpStatus: () => invoke<McpHttpStatus>("mcp_http_status"),
+    startTunnel: async (port, handlers) => {
+      const unlisten = await Promise.all([
+        listen<string>("mcp-tunnel-event", (e) => handlers.onUrl(e.payload)),
+        listen<string>("mcp-tunnel-log", (e) => handlers.onLog(e.payload)),
+        listen<{ code: number | null; cancelled: boolean }>("mcp-tunnel-exit", (e) =>
+          handlers.onExit(e.payload.code, e.payload.cancelled),
+        ),
+      ]);
+      const stop = () => unlisten.forEach((fn) => fn());
+      try {
+        await invoke("start_tunnel", { port });
+      } catch (err) {
+        stop();
+        throw err;
+      }
+      return stop;
+    },
+    stopTunnel: () => invoke<boolean>("stop_tunnel"),
     systemMetrics: (sinceMs) => invoke<MetricsSnapshot>("system_metrics", { sinceMs }),
     confirm: (message, title) => dialog.ask(message, { title, kind: "warning" }),
   };
@@ -440,8 +494,91 @@ function previewBridge(): WorkerBridge {
       },
       bundled: true,
     }),
+    ...previewMcpHttp(),
     systemMetrics: async (sinceMs) => previewMetrics(sinceMs),
     confirm: async (message) => window.confirm(message),
+  };
+}
+
+/** Simulated HTTP server + tunnel so the Perplexity card can be reviewed in a browser. */
+function previewMcpHttp(): Pick<
+  WorkerBridge,
+  "startMcpHttp" | "stopMcpHttp" | "mcpHttpStatus" | "startTunnel" | "stopTunnel"
+> {
+  let server: McpHttpHandlers | null = null;
+  let tunnel: TunnelHandlers | null = null;
+  let timers: number[] = [];
+  let token = "preview-key-3f9c1d7a2b6e4c08a1d5f7e9b2c4d6e8";
+  const clear = () => {
+    timers.forEach((t) => window.clearTimeout(t));
+    timers = [];
+  };
+  const stopTunnel = () => {
+    const had = tunnel !== null;
+    tunnel?.onExit(null, true);
+    tunnel = null;
+    return had;
+  };
+  return {
+    startMcpHttp: async (port, rotate, handlers) => {
+      if (server) throw new Error("the MCP HTTP server is already running");
+      if (rotate) token = `preview-key-${Math.random().toString(16).slice(2).padEnd(32, "0")}`;
+      server = handlers;
+      timers.push(
+        window.setTimeout(() => {
+          handlers.onEvent({
+            type: "mcp_http",
+            state: "listening",
+            url: `http://127.0.0.1:${port}/mcp`,
+            port,
+            token,
+            token_source: rotate ? "new" : "file",
+            token_path: "C:\\Users\\you\\AppData\\Local\\com.luongminhphu.localsubnpu\\mcp\\http-token",
+            audit_log: "C:\\Users\\you\\AppData\\Local\\com.luongminhphu.localsubnpu\\output\\logs\\mcp_http.jsonl",
+            redact: true,
+            at: new Date().toISOString(),
+          });
+        }, 300),
+      );
+      return () => undefined;
+    },
+    stopMcpHttp: async () => {
+      clear();
+      const had = server !== null || tunnel !== null;
+      stopTunnel();
+      server?.onExit(null, true);
+      server = null;
+      return had;
+    },
+    mcpHttpStatus: async () => ({
+      server: server !== null,
+      tunnel: tunnel !== null,
+      cloudflared: "C:\\Program Files (x86)\\cloudflared\\cloudflared.exe",
+    }),
+    startTunnel: async (_port, handlers) => {
+      if (!server) throw new Error("start the MCP HTTP server first");
+      if (tunnel) throw new Error("the HTTPS tunnel is already running");
+      tunnel = handlers;
+      const srv = server;
+      timers.push(
+        window.setTimeout(() => handlers.onUrl("https://quiet-river-demo.trycloudflare.com"), 800),
+        window.setTimeout(() => {
+          srv.onEvent({
+            type: "mcp_http_request",
+            ts: new Date().toISOString(),
+            http: "POST",
+            method: "tools/call",
+            name: "localsub_analyze_performance",
+            status: 200,
+            auth: "ok",
+            duration_ms: 12.4,
+            client_ip: "203.0.113.7",
+          });
+        }, 1800),
+      );
+      return () => undefined;
+    },
+    stopTunnel: async () => stopTunnel(),
   };
 }
 

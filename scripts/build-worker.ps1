@@ -71,6 +71,57 @@ try {
   }
   Write-Host "MCP ok: $((($lines[0] | ConvertFrom-Json).result.serverInfo.version))"
 
+  Write-Host "Smoke test: MCP server over Streamable HTTP (Perplexity connector)"
+  $env:LOCALSUB_MCP_TOKEN = "smoke-" + [guid]::NewGuid().ToString("N")
+  $port = 18765
+  $httpErr = Join-Path $env:TEMP "localsub-mcp-http.err"
+  $httpOut = Join-Path $env:TEMP "localsub-mcp-http.out"
+  $proc = Start-Process -FilePath $exe -ArgumentList @("mcp", "--http", "--port", "$port") -PassThru `
+    -NoNewWindow -RedirectStandardError $httpErr -RedirectStandardOutput $httpOut
+  try {
+    $url = "http://127.0.0.1:$port/mcp"
+    $ready = $false
+    for ($i = 0; $i -lt 60 -and -not $ready; $i++) {
+      Start-Sleep -Milliseconds 500
+      if ($proc.HasExited) { throw "mcp --http exited early: $(Get-Content $httpErr -Raw)" }
+      try {
+        $client = New-Object Net.Sockets.TcpClient
+        $client.Connect("127.0.0.1", $port)
+        $client.Close()
+        $ready = $true
+      } catch { }
+    }
+    if (-not $ready) { throw "mcp --http did not start listening on $port" }
+    $body = '{"jsonrpc":"2.0","id":1,"method":"server/discover","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}'
+    $headers = @{
+      "MCP-Protocol-Version" = "2026-07-28"
+      "Mcp-Method"           = "server/discover"
+      "Accept"               = "application/json, text/event-stream"
+    }
+    $status = 0
+    try {
+      Invoke-WebRequest -Uri $url -Method Post -Body $body -ContentType "application/json" -Headers $headers -UseBasicParsing | Out-Null
+      $status = 200
+    } catch {
+      $status = [int]$_.Exception.Response.StatusCode
+    }
+    if ($status -ne 401) { throw "mcp http: expected 401 without the API key, got $status" }
+    $headers["Authorization"] = "Bearer $env:LOCALSUB_MCP_TOKEN"
+    $resp = Invoke-RestMethod -Uri $url -Method Post -Body $body -ContentType "application/json" -Headers $headers
+    if ($resp.result.supportedVersions[0] -ne "2026-07-28") { throw "mcp http: unexpected response $($resp | ConvertTo-Json -Depth 5)" }
+    $audit = Join-Path $env:LOCALSUB_OUTPUT_DIR "logs\mcp_http.jsonl"
+    if (-not (Test-Path $audit)) { throw "mcp http: audit log $audit missing" }
+    $entries = @(Get-Content $audit | ForEach-Object { $_ | ConvertFrom-Json })
+    if ($entries.Count -lt 2 -or $entries[-2].status -ne 401 -or $entries[-1].status -ne 200) {
+      throw "mcp http: audit log does not show 401 then 200"
+    }
+    Write-Host "MCP HTTP ok: 401 without key, 200 with key, $($entries.Count) audit entries"
+  }
+  finally {
+    if (-not $proc.HasExited) { Stop-Process -Id $proc.Id -Force }
+    Remove-Item Env:LOCALSUB_MCP_TOKEN -ErrorAction SilentlyContinue
+  }
+
   $size = (Get-ChildItem -Recurse (Split-Path $exe) | Measure-Object Length -Sum).Sum / 1MB
   Write-Host ("Frozen worker ready: {0} ({1:N0} MB)" -f (Split-Path $exe), $size) -ForegroundColor Green
 }

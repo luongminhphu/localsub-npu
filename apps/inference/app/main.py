@@ -7,7 +7,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
-from app import analysis, history, mcp_server, model_store, power, translation, whisper
+from app import analysis, history, mcp_http, mcp_server, model_store, power, translation, whisper
 from app.audit import to_jsonable
 from app.config import Settings, load_env_file
 from app.diagnostics import build_diagnostic_report
@@ -75,6 +75,19 @@ def build_parser() -> argparse.ArgumentParser:
     mcp = sub.add_parser("mcp", help="Run the read-only MCP server on stdio for AI assistants")
     mcp.add_argument(
         "--no-redact", action="store_true", help="Show real media file names to the AI client"
+    )
+    mcp.add_argument(
+        "--http",
+        action="store_true",
+        help="Serve Streamable HTTP on 127.0.0.1 (Perplexity custom connector) instead of stdio",
+    )
+    mcp.add_argument("--port", type=int, default=8765, help="HTTP port (1024-65535, 0 = any)")
+    mcp.add_argument(
+        "--events", action="store_true", help="Print JSON status events (with the key) on stdout"
+    )
+    mcp.add_argument("--rotate-token", action="store_true", help="Generate a new HTTP API key")
+    mcp.add_argument(
+        "--parent-pid", type=int, default=0, help="Stop when this process exits (desktop app)"
     )
 
     tr = sub.add_parser("transcribe", help="Generate subtitles from local media")
@@ -342,6 +355,18 @@ def main(argv: list[str] | None = None) -> int:
                 _print_json(report)
             return 0
         if args.command == "mcp":
+            if args.http:
+                if args.port != 0 and not 1024 <= args.port <= 65535:
+                    print("localsub mcp: --port must be 1024-65535 (or 0)", file=sys.stderr)
+                    return 2
+                return mcp_http.serve_http(
+                    settings,
+                    port=args.port,
+                    redact=not args.no_redact,
+                    events=args.events,
+                    rotate=args.rotate_token,
+                    parent_pid=args.parent_pid,
+                )
             return mcp_server.serve(settings, redact=not args.no_redact)
         if args.command == "transcribe":
             return _cmd_transcribe(args, settings)

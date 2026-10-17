@@ -8,13 +8,13 @@
 - Sửa phụ đề trực tiếp trong bảng, xuất **SRT, VTT, TXT** và file dự án `.localsub.json`.
 - Media không bao giờ rời khỏi máy. Sau khi tải model lần đầu, không cần Internet và không cần API key.
 
-> Phiên bản hiện tại: **0.11.0 (tab Phân tích (AI) và MCP server chỉ đọc để trợ lý AI phân tích hiệu suất, log) · 0.10.0 (thêm tiếng Hàn: nhận dạng và dịch Hàn → Việt/Anh) · 0.9.2 (trả runtime OpenVINO về 2026.4.0 như 0.8.0, tắt mặc định ép tốc độ tối đa EcoQoS) · 0.9.1 (tự phục hồi khi driver NPU bị reset giữa chừng) · 0.9.0 (Wave 7: giữ máy thức và chạy tốc độ tối đa khi xử lý, danh mục model dùng chung, thêm Qwen3.5 và Distil-Whisper)**. Có **bộ cài Windows** (không cần Python/Node/Rust) — xem
+> Phiên bản hiện tại: **0.12.0 (kết nối Perplexity qua MCP: server HTTP chỉ đọc có khóa API + đường hầm HTTPS) · 0.11.0 (tab Phân tích (AI) và MCP server chỉ đọc để trợ lý AI phân tích hiệu suất, log) · 0.10.0 (thêm tiếng Hàn: nhận dạng và dịch Hàn → Việt/Anh) · 0.9.2 (trả runtime OpenVINO về 2026.4.0 như 0.8.0, tắt mặc định ép tốc độ tối đa EcoQoS) · 0.9.1 (tự phục hồi khi driver NPU bị reset giữa chừng) · 0.9.0 (Wave 7: giữ máy thức và chạy tốc độ tối đa khi xử lý, danh mục model dùng chung, thêm Qwen3.5 và Distil-Whisper)**. Có **bộ cài Windows** (không cần Python/Node/Rust) — xem
 > [Cài nhanh bằng bộ cài](#cài-nhanh-bằng-bộ-cài). Muốn phát triển hoặc chạy dòng lệnh thì cài từ mã nguồn (mục 2–6).
 
 ## Cài nhanh bằng bộ cài
 
 1. Cài FFmpeg (một lần): `winget install --id Gyan.FFmpeg -e`, rồi đăng xuất/đăng nhập lại để PATH có hiệu lực.
-2. Tải file `LocalSub.NPU_0.11.0_x64-setup.exe` ở trang
+2. Tải file `LocalSub.NPU_0.12.0_x64-setup.exe` ở trang
    [Releases](https://github.com/luongminhphu/localsub-npu/releases) (hoặc artifact
    `localsub-npu-windows-installer` của workflow **Release** trong tab Actions).
 3. Chạy bộ cài. Bộ cài **chưa được ký số**, nên Windows SmartScreen có thể hiện "Windows protected your PC":
@@ -208,7 +208,7 @@ Tự đóng gói bộ cài (giống workflow Release trên GitHub):
 .\scripts\build-worker.ps1          # đóng băng worker bằng PyInstaller -> apps\inference\dist\localsub-worker\ + smoke test
 cd apps\desktop
 npx tauri build --bundles nsis --config src-tauri/tauri.bundle.conf.json
-# kết quả: apps\desktop\src-tauri\target\release\bundle\nsis\LocalSub.NPU_0.11.0_x64-setup.exe
+# kết quả: apps\desktop\src-tauri\target\release\bundle\nsis\LocalSub.NPU_0.12.0_x64-setup.exe
 ```
 
 `tauri.bundle.conf.json` chỉ dùng khi build bộ cài (thêm thư mục worker vào gói); `npm run tauri dev` không cần nó.
@@ -363,12 +363,63 @@ Sau khi cài bản mới, gọi lại `localsub_compare_jobs` để xác nhận 
 
 **Quyền riêng tư và giới hạn:**
 
-- MCP server chỉ đọc `jobs.jsonl`, chẩn đoán và danh mục model; không chạy job, không tải/xóa model, không mở cổng mạng.
+- MCP server chỉ đọc `jobs.jsonl`, chẩn đoán và danh mục model; không chạy job, không tải/xóa model. Chế độ stdio không mở cổng mạng
+  (chế độ HTTP cho Perplexity: xem mục dưới).
 - Mặc định tên file và đường dẫn được ẩn với AI (`media-<mã băm>.mp4`, thư mục người dùng thành `~`). Thêm
   `--no-redact` vào `args` nếu muốn AI thấy tên file thật. Tab trong app luôn hiện tên thật vì chỉ hiển thị trên máy.
 - Nhật ký không có nội dung phụ đề, nên AI không đọc được lời thoại. Nội dung tool trả về sẽ được gửi tới dịch vụ AI bạn dùng.
 - Ổ mạng ánh xạ (ví dụ `Z:`) trông như ổ cục bộ trong log, nên quy tắc tách audio chậm chỉ nhận ra chắc chắn đường dẫn UNC `\\máy\thư-mục`.
 - Dòng lệnh tương đương: `python -m app.main analyze --limit 50` (JSON) hoặc `--format markdown --language vi`.
+
+### Kết nối Perplexity (0.12.0)
+
+Perplexity không chạy MCP server qua stdio như Claude Desktop. Có hai cách:
+
+| Cách | Dùng khi | Cần gì |
+|---|---|---|
+| **Custom remote connector** (web, ứng dụng Windows/Mac, Comet, Computer) | Mọi máy, kể cả máy Intel NPU | Gói Perplexity Pro/Max/Enterprise, URL **HTTPS** dùng Streamable HTTP, khóa API ([hướng dẫn của Perplexity](https://www.perplexity.ai/help-center/en/articles/13915507-adding-custom-remote-connectors)) |
+| **Portable Computer – Local (stdio)** (ứng dụng Windows) | Máy có GPU NVIDIA RTX từ 24 GB VRAM và model chạy cục bộ | Không cần đường hầm; chỉ dùng ở chế độ Local ([hướng dẫn](https://www.perplexity.ai/help-center/en/articles/20260915-what-is-portable-computer)) |
+
+Máy Intel Lunar Lake (như XBOOK) dùng cách thứ nhất. Trong tab **Phân tích (AI)** → chọn **Perplexity**:
+
+1. **Bật server** (cổng mặc định 8765, có hộp xác nhận). Worker chạy `localsub-worker.exe mcp --http --port 8765`, chỉ nghe trên
+   `127.0.0.1`, tạo khóa API ngẫu nhiên lưu ở `%LOCALAPPDATA%\com.luongminhphu.localsubnpu\mcp\http-token`.
+2. **Mở đường hầm** (có hộp xác nhận). App chạy [Cloudflare quick tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/do-more-with-tunnels/trycloudflare/)
+   `cloudflared tunnel --url http://127.0.0.1:8765` và hiện URL dạng `https://<tên>.trycloudflare.com/mcp`. Chưa có cloudflared thì cài:
+   `winget install --id Cloudflare.cloudflared`, rồi bấm **Kiểm tra lại**.
+3. Trong Perplexity: **Plugins** (hoặc **Customize → Connectors**) → **Add custom → Connector → Add MCP connector → Remote**, điền:
+   - Name: `LocalSub NPU`
+   - MCP Server URL: URL ở bước 2 (nút **Sao chép**)
+   - Authentication: **API Key**, dán khóa ở bước 1
+   - Transport: **Streamable HTTP**
+4. Bật connector trong khung chat và hỏi, ví dụ: "Dùng LocalSub NPU phân tích hiệu suất các job gần đây và đề xuất tối ưu".
+
+Tab hiện trạng thái server và đường hầm (kèm giờ GMT+7), yêu cầu gần nhất, số yêu cầu và số lần sai khóa. Mỗi lần mở
+đường hầm nhanh, URL sẽ khác nên phải cập nhật lại trong connector; khóa API giữ nguyên cho tới khi bấm **Đổi khóa API và bật lại**.
+Đóng app thì server và đường hầm cũng dừng (worker tự dừng khi app thoát). Đường hầm nhanh không cần tài khoản Cloudflare, không có cam kết
+uptime và không hỗ trợ SSE, vì vậy chọn Transport **Streamable HTTP** (server luôn trả JSON). Muốn URL cố định thì tạo
+Cloudflare Tunnel có tên bằng tài khoản Cloudflare và trỏ về `http://127.0.0.1:8765`.
+
+**Bảo mật của chế độ HTTP:**
+
+- Mọi yêu cầu cần khóa API (`Authorization: Bearer <khóa>`, `Authorization: <khóa>` hoặc `X-API-Key`), so sánh thời gian hằng.
+  Sai khóa → 401; quá 10 lần sai/phút → 429 (khóa tạm), quá 120 yêu cầu/phút → 429.
+- Kiểm tra `Origin` (chống DNS rebinding): chỉ chấp nhận khi không có Origin, `localhost` hoặc `https://*.perplexity.ai`
+  (thêm nguồn khác bằng `LOCALSUB_MCP_ALLOWED_ORIGINS`). Giới hạn body 1 MB, không nhận batch.
+- Công cụ vẫn chỉ đọc, đường dẫn được ẩn. Ai có cả URL và khóa đều đọc được nhật ký job, nên không chia sẻ khóa và đóng đường hầm khi không dùng.
+- Nhật ký truy cập `output\logs\mcp_http.jsonl`: thời điểm (UTC), phương thức, tool, mã HTTP, kết quả xác thực, thời gian xử lý,
+  IP gốc từ Cloudflare (`CF-Connecting-IP`). Không ghi khóa và tham số tool.
+- Theo đặc tả [Streamable HTTP 2026-07-28](https://modelcontextprotocol.io/specification/2026-07-28/basic/transports/streamable-http):
+  chỉ POST (GET/DELETE → 405), thông báo → 202, kiểm tra `MCP-Protocol-Version` / `Mcp-Method` / `Mcp-Name` (lệch → 400 `-32020`),
+  không cấp `Mcp-Session-Id`. Client cũ dùng `initialize` (2025-11-25 trở về trước) vẫn chạy.
+
+Dòng lệnh tương đương (không cần app):
+
+```powershell
+$env:LOCALSUB_MCP_TOKEN = "<khóa tự đặt, tối thiểu 24 ký tự>"   # bỏ qua để dùng khóa lưu trong file
+& $py -m app.main mcp --http --port 8765
+cloudflared tunnel --no-autoupdate --url http://127.0.0.1:8765
+```
 
 ---
 
@@ -437,6 +488,9 @@ $py = ".\.venv\Scripts\python.exe"
 
 # MCP server chỉ đọc cho trợ lý AI (stdio; thường do ứng dụng AI tự chạy)
 & $py -m app.main mcp
+
+# MCP qua HTTP trên 127.0.0.1 cho Perplexity (cần khóa API; --rotate-token tạo khóa mới)
+& $py -m app.main mcp --http --port 8765
 
 # Xuất lại từ project JSON đã sửa
 & $py -m app.main export --input D:\talk.localsub.json --output-base D:\final\talk --formats srt,vtt,txt
@@ -632,6 +686,8 @@ Cách đọc: nếu ở bước Dịch mà GPU thấp và CPU cao, model dịch 
 | `LOCALSUB_KEEP_AWAKE` | bật | `0` cho phép Windows sleep/hạ tốc độ worker khi đang xử lý (giống `--allow-sleep`) |
 | `LOCALSUB_KEEP_DISPLAY_ON` | tắt | `1` giữ màn hình sáng trong lúc xử lý |
 | `LOCALSUB_VLM_CACHE_GB` | `2` | Bộ nhớ cache (GB) cho model Qwen3.5 khi dịch theo lô |
+| `LOCALSUB_MCP_TOKEN` | khóa lưu trong `mcp\http-token` | Khóa API cho `mcp --http` (tối thiểu 24 ký tự) |
+| `LOCALSUB_MCP_ALLOWED_ORIGINS` | trống | Danh sách Origin thêm, phân tách bằng dấu phẩy, cho `mcp --http` |
 | `LOCALSUB_WORKER_DIR` | tự dò | App desktop: thư mục chứa `app\main.py` |
 | `LOCALSUB_WORKER_PYTHON` | `<worker>\.venv\Scripts\python.exe` | App desktop: Python dùng để chạy worker |
 
@@ -721,6 +777,8 @@ CI (GitHub Actions) chạy Python lint/test, frontend lint/type-check/test/build
   trước khi chạy worker bằng mảng tham số. Quyền Tauri giới hạn ở `core:default` và `dialog:default`.
 - Nhật ký không chứa nội dung phụ đề. Không đưa video, model, token hay mật khẩu vào repository.
 - MCP server (0.11.0) chỉ đọc, chạy qua stdio (không mở cổng), mặc định ẩn tên file và đường dẫn khỏi trợ lý AI.
+- Chế độ HTTP cho Perplexity (0.12.0) chỉ bật khi bạn xác nhận: nghe trên `127.0.0.1`, cần khóa API, có giới hạn tần suất và
+  nhật ký truy cập. Đường hầm HTTPS công khai chỉ mở khi bạn bấm và tự đóng khi tắt server hoặc thoát app.
 
 ---
 
@@ -740,7 +798,8 @@ CI (GitHub Actions) chạy Python lint/test, frontend lint/type-check/test/build
 10. 0.9.2: khóa runtime OpenVINO 2026.4.0 (`apps/inference/constraints.txt`, giống 0.8.0), EcoQoS opt-out thành tùy chọn. ✅
 11. 0.10.0: tiếng Hàn là ngôn ngữ nói (nhận dạng `ko`, dịch Hàn → Việt/Anh, cắt câu theo chuẩn phụ đề tiếng Hàn). ✅
 12. 0.11.0: tab Phân tích (AI) và MCP server chỉ đọc (log, chẩn đoán, phân tích hiệu suất, kế hoạch tối ưu cho AI lập trình). ✅
-13. Tiếp theo (backlog): MCP giai đoạn 2 (chạy benchmark/đổi cấu hình có xác nhận, transport HTTP nếu cần), tăng tốc nạp model, đo tốc độ Qwen3.5 trên GPU Arc, chẩn đoán rõ lỗi driver NPU, preset tốc độ/chất lượng, benchmark thiết bị ngay trong app, ký số bộ cài, kèm FFmpeg trong bộ cài, tự cập nhật.
+13. 0.12.0: kết nối Perplexity — MCP qua Streamable HTTP (khóa API, kiểm tra Origin, giới hạn tần suất, nhật ký truy cập) và đường hầm HTTPS Cloudflare ngay trong app. ✅
+14. Tiếp theo (backlog): MCP giai đoạn 2 (chạy benchmark/đổi cấu hình có xác nhận), đường hầm có tên để URL cố định, OAuth cho connector, tăng tốc nạp model, đo tốc độ Qwen3.5 trên GPU Arc, chẩn đoán rõ lỗi driver NPU, preset tốc độ/chất lượng, benchmark thiết bị ngay trong app, ký số bộ cài, kèm FFmpeg trong bộ cài, tự cập nhật.
 
 ## Giấy phép
 
