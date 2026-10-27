@@ -207,6 +207,7 @@ def _cmd_transcribe(args: argparse.Namespace, settings: Settings) -> int:
             record.translation_device.resolved if record.translation_device else None
         ),
         "translation_fallback_lines": record.translation_fallback_lines,
+        "translation_fallback_reasons": record.translation_fallback_reasons,
         "openvino_version": record.openvino_version,
         "source_duration_ms": record.source_duration_ms,
         "timings_ms": record.timings_ms,
@@ -271,6 +272,7 @@ def _cmd_translate(args: argparse.Namespace, settings: Settings) -> int:
             "outputs": outputs,
             "device": translator.device,
             "fallback_lines": result.fallback_lines,
+            "fallback_reasons": dict(result.fallback_reasons),
             "timings_ms": {"load": translator.load_ms, "translation": result.inference_ms},
         }
     )

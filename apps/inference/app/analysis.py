@@ -435,9 +435,13 @@ def _rule_translation(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 ),
                 (
                     "Dùng model dịch lớn hơn (Qwen3 4B/8B) cho tiếng Nhật/Hàn; xem prompt và bộ "
-                    "phân tích kết quả khi số dòng trả về lệch.",
+                    "phân tích kết quả khi số dòng trả về lệch. Từ 0.12.2, fallback_reasons cho "
+                    "biết lý do: missing (không đọc được dòng), placeholder, loop, no_letters, "
+                    "too_long.",
                     "Use a larger translator (Qwen3 4B/8B) for Japanese/Korean; review the prompt "
-                    "and the response parser when line counts mismatch.",
+                    "and the response parser when line counts mismatch. From 0.12.2 "
+                    "fallback_reasons gives the cause: missing (line not parsed), placeholder, "
+                    "loop, no_letters, too_long.",
                 ),
                 [r["job_id"] for r, _, _ in fallback],
                 {
@@ -446,6 +450,7 @@ def _rule_translation(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
                             "job_id": r["job_id"],
                             "fallback_lines": n,
                             "cue_count": c,
+                            "fallback_reasons": r.get("translation_fallback_reasons"),
                             "language": r.get("detected_language") or r.get("language"),
                             "translation_model": r.get("translation_model"),
                         }
@@ -844,6 +849,7 @@ def compare_jobs(a: dict[str, Any], b: dict[str, Any]) -> dict[str, Any]:
         "translation_overlap_lines",
         "translation_overlap_diverged_at",
         "translation_fallback_lines",
+        "translation_fallback_reasons",
     )
     differences = {f: {"a": a.get(f), "b": b.get(f)} for f in fields if a.get(f) != b.get(f)}
     for key in ("device", "translation_device"):
