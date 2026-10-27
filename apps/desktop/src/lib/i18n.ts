@@ -10,7 +10,7 @@ const vi = {
   "app.eyebrow": "CỤC BỘ · RIÊNG TƯ · WINDOWS 11",
   "app.subtitle": "Phụ đề offline và dịch EN↔VI, JA → EN/VI trên Intel NPU.",
   "app.chipPreview": "Xem trước trên trình duyệt · dữ liệu mẫu",
-  "app.chipDesktop": "Desktop · v0.12.1",
+  "app.chipDesktop": "Desktop · v0.12.2",
   "app.language": "Ngôn ngữ giao diện",
 
   "media.title": "1. Media",
@@ -317,7 +317,7 @@ const en: Record<MessageKey, string> = {
   "app.eyebrow": "LOCAL · PRIVATE · WINDOWS 11",
   "app.subtitle": "Offline subtitles and EN↔VI, JA → EN/VI translation on the Intel NPU.",
   "app.chipPreview": "Browser preview · sample data",
-  "app.chipDesktop": "Desktop · v0.12.1",
+  "app.chipDesktop": "Desktop · v0.12.2",
   "app.language": "Interface language",
 
   "media.title": "1. Media",

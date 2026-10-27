@@ -59,6 +59,8 @@ class JobRecord:
     translation_model: str | None = None
     translation_device: DeviceResolution | None = None
     translation_fallback_lines: int | None = None
+    # Why those lines stayed untranslated: missing / placeholder / loop / no_letters / too_long.
+    translation_fallback_reasons: dict[str, int] | None = None
     translation_parallel: int | None = None  # batches per generate() call after tuning
     power: dict[str, Any] | None = None  # keep-awake / throttling state applied for the job
     overlap: bool | None = None  # translation ran while Whisper was still transcribing
@@ -679,6 +681,10 @@ def _run_job(
             record.translation_fallback_lines = (head.fallback_lines if head else 0) + (
                 tail.fallback_lines
             )
+            reasons: dict[str, int] = {}
+            for key, n in (*(head.fallback_reasons if head else ()), *tail.fallback_reasons):
+                reasons[key] = reasons.get(key, 0) + n
+            record.translation_fallback_reasons = reasons
             record.timings_ms["translation"] = (head.inference_ms if head else 0) + (
                 tail.inference_ms
             )

@@ -617,6 +617,19 @@ App **không chạy chồng** (tự quay về tuần tự và ghi lý do vào `o
 
 Lưu ý: GPU và NPU vẫn dùng chung băng thông RAM. Whisper small nhỏ (~250 MB) và chủ yếu tốn tính toán nên ít tranh với LLM hơn nhiều so với việc hai bản LLM cùng dịch, nhưng tốc độ mỗi bước khi chạy chồng có thể chậm đi một chút.
 
+### Bớt dòng giữ nguyên tiếng gốc (0.12.2)
+
+Phân tích hiệu suất ngày 28/10/2026 (50 job gần nhất) cho thấy 30 job tiếng Nhật còn hơn 10% số câu giữ nguyên tiếng gốc (ví dụ 899/2890 câu ≈ 31%), kể cả sau khi đã dịch lại từng câu. Mỗi câu như vậy còn tốn thêm một lượt gọi LLM.
+
+- **Nguyên nhân đã tái hiện được bằng test** (chưa xác nhận trên câu trả lời thật vì log không lưu nội dung phụ đề): bộ đọc kết quả bỏ qua một số kiểu đánh số mà model nhỏ hay dùng, nên câu đã dịch vẫn bị tính là không dịch được:
+  - `[1] text` và `(1) text` (dấu ngoặc là dấu phân cách, không có dấu chấm sau);
+  - `**1.** text`, `**1. text**` (Markdown đậm) và `- 1. text` (gạch đầu dòng);
+  - `1、text` (dấu phẩy tiếng Nhật);
+  - số đứng riêng một dòng, câu dịch ở dòng sau;
+  - khi dịch lại một câu, model trả đúng một dòng nhưng không đánh số.
+- **Cách sửa:** bộ đọc chấp nhận các dạng trên. Câu trả lời một dòng không đánh số chỉ được nhận khi prompt có đúng một câu và trả lời chỉ có một dòng; nhiều dòng không đánh số vẫn bị coi là giải thích và bị loại. Số trần trong câu (ví dụ "3 people came") vẫn không bị hiểu là số thứ tự.
+- **Bằng chứng cho lần chạy sau:** `jobs.jsonl`, MCP `localsub_get_job`, `localsub_compare_jobs` và phát hiện `translation_fallback_lines` có thêm `translation_fallback_reasons`, đếm số câu theo lý do: `missing` (không đọc được câu), `placeholder`, `loop`, `no_letters`, `too_long`. Chỉ lưu số đếm, không lưu nội dung phụ đề.
+
 ### GPU tự điều chỉnh số lô dịch (0.8.0)
 
 Khi sinh chữ, LLM bị giới hạn bởi **băng thông RAM**: mỗi bước phải đọc lại toàn bộ trọng số model (Qwen3 8B khoảng 4,9 GB). Gửi nhiều lô trong một lần gọi giúp đọc trọng số một lần mà sinh chữ cho nhiều câu, nên đây là cách tăng tốc chính trên GPU.

@@ -44,7 +44,15 @@ AUTO_TRANSLATION_DEVICES = ("GPU", "NPU", "CPU")
 LLMFactory = Callable[[Path, str, dict[str, Any]], Any]
 ProgressSink = Callable[[int, int], None]
 
-_NUMBERED = re.compile(r"^\s*(?:\[)?(\d{1,3})(?:\])?\s*[.):\-]\s*(.*)$")
+# "1. text", "1) text", "[1]: text", "1、text" and, as small models reply, "[1] text",
+# "(1) text", "**1.** text" or "- 1. text". A bare number needs a separator so "3 people
+# came" is not read as line 3.
+_NUMBERED = re.compile(
+    r"^\s*(?:[-*\u2022>]\s+)?(?:\*\*|__)?"
+    r"(?:[\[(](\d{1,3})[\])](?:\*\*|__)?\s*[.):\-\u3001]?|(\d{1,3})\s*[.):\-\u3001](?:\*\*|__)?)"
+    r"\s*(.*)$"
+)
+_EMPHASIS = re.compile(r"^(?:\*\*|__)\s*|\s*(?:\*\*|__)$")
 _THINK = re.compile(r"<think>.*?</think>", re.DOTALL)
 
 
@@ -64,6 +72,8 @@ class TranslationResult:
     inference_ms: int
     parallel: int | None = None  # batches per generate() call the run settled on
     tuning: tuple[tuple[int, float], ...] = ()  # (parallel, lines/s) measured while tuning
+    # (reason, lines) for lines kept in the source language; reasons sum to fallback_lines.
+    fallback_reasons: tuple[tuple[str, int], ...] = ()
 
 
 REQUIRED_FILES: tuple[str, ...] = (
@@ -275,18 +285,39 @@ def build_messages(
     return [{"role": "system", "content": rules}, {"role": "user", "content": body}]
 
 
+def _clean(value: str) -> str:
+    return _EMPHASIS.sub("", value.strip()).strip().strip('"').strip()
+
+
 def parse_numbered(output: str, expected: int) -> list[str | None]:
     text = _THINK.sub("", output).replace("<think>", "").replace("</think>", "")
     result: list[str | None] = [None] * expected
+    pending: int | None = None  # "1." alone on a line: its text is on the next line
     for line in text.splitlines():
         # Japanese-aware models may number with full-width digits/punctuation ("１．").
         match = _NUMBERED.match(unicodedata.normalize("NFKC", line))
         if not match:
+            value = _clean(line)
+            if pending is not None and value:
+                if result[pending - 1] is None:
+                    result[pending - 1] = value
+                pending = None
             continue
-        number = int(match.group(1))
-        value = match.group(2).strip().strip('"').strip()
-        if 1 <= number <= expected and value and result[number - 1] is None:
+        number = int(match.group(1) or match.group(2))
+        value = _clean(match.group(3))
+        pending = None
+        if not 1 <= number <= expected:
+            continue
+        if not value:
+            pending = number
+        elif result[number - 1] is None:
             result[number - 1] = value
+    if expected == 1 and result[0] is None:
+        # One-line prompts are often answered with just the translation; several
+        # unnumbered lines are prose, not a translation, so they are not guessed from.
+        lines = [_clean(raw) for raw in text.splitlines() if _clean(raw)]
+        if len(lines) == 1:
+            result[0] = lines[0]
     return result
 
 
@@ -339,21 +370,35 @@ _PLACEHOLDER = re.compile(r"^(?:N\s*[.)]\s*)?(?:text|translation)?\s*[.]?$", re.
 _LOOP = re.compile(r"(\S{1,12}?)(?:\s*\1){5,}")
 
 
-def plausible(value: str | None, source: str) -> str | None:
-    """Reject echoes of the prompt format and degenerate loops from small models."""
+FALLBACK_REASONS = ("missing", "placeholder", "loop", "no_letters", "too_long")
+
+
+def rejection_reason(value: str | None, source: str) -> str | None:
+    """Why a parsed value is not a usable translation (one of ``FALLBACK_REASONS``), or
+    ``None`` when it is. Reasons are counted per job so the analysis shows which one
+    dominates without storing any subtitle text."""
     if value is None:
-        return None
+        return "missing"
     text = value.strip()
-    if not text or _PLACEHOLDER.match(text) or text.upper().startswith("N. "):
-        return None
+    if not text:
+        return "missing"
+    if _PLACEHOLDER.match(text) or text.upper().startswith("N. "):
+        return "placeholder"
     if _LOOP.search(text):  # "1. 1. 1. 1. ..." or a word repeated 6+ times
-        return None
+        return "loop"
     letters = sum(ch.isalpha() for ch in text)
     if letters == 0 and any(ch.isalpha() for ch in source):
-        return None
+        return "no_letters"
     if len(text) > 4 * len(source) + 40:
+        return "too_long"
+    return None
+
+
+def plausible(value: str | None, source: str) -> str | None:
+    """Reject echoes of the prompt format and degenerate loops from small models."""
+    if value is None or rejection_reason(value, source):
         return None
-    return text
+    return value.strip()
 
 
 class _Engine:
@@ -381,13 +426,20 @@ class _Engine:
                 ErrorCode.TRANSLATION_FAILED, f"LLM generation failed: {str(exc)[:200]}"
             ) from exc
         return [
-            [plausible(v, src) for v, src in zip(parse_numbered(raw, len(b)), b, strict=True)]
+            [
+                (plausible(v, src), rejection_reason(v, src))
+                for v, src in zip(parse_numbered(raw, len(b)), b, strict=True)
+            ]
             for raw, (b, _) in zip(raws, jobs, strict=True)
         ]
 
-    def unit(self, group: Sequence[tuple[list[str], list[str]]]) -> tuple[list[list[str]], int]:
-        parsed = self._run(group)
-        fallbacks = 0
+    def unit(
+        self, group: Sequence[tuple[list[str], list[str]]]
+    ) -> tuple[list[list[str]], dict[str, int]]:
+        """Translate one unit; returns the lines and, per reason, the lines kept in the
+        source language after the single-line retry also failed."""
+        parsed = [[v for v, _ in values] for values in self._run(group)]
+        reasons: dict[str, int] = {}
         # Keep the source text for lines the model still fails so the editor can fix them.
         misses = [
             (b, i) for b, values in enumerate(parsed) for i, v in enumerate(values) if v is None
@@ -396,10 +448,12 @@ class _Engine:
             chunk = misses[start_idx : start_idx + self.parallel]
             retried = self._run([([group[b][0][i]], group[b][1]) for b, i in chunk])
             for (b, i), values in zip(chunk, retried, strict=True):
-                if values[0] is None:
-                    fallbacks += 1
-                parsed[b][i] = values[0] or group[b][0][i]
-        return [[v or "" for v in values] for values in parsed], fallbacks
+                value, reason = values[0]
+                if value is None:
+                    key = reason or "missing"
+                    reasons[key] = reasons.get(key, 0) + 1
+                parsed[b][i] = value or group[b][0][i]
+        return [[v or "" for v in values] for values in parsed], reasons
 
 
 def _batches(lines: Sequence[str], batch_size: int) -> list[tuple[int, list[str], list[str]]]:
@@ -609,6 +663,7 @@ def translate_feed(
     engine = _Engine(translator, source, target, tuner.parallel)
     output: list[str] = []
     fallbacks = 0
+    reasons: dict[str, int] = {}
     busy = 0.0
     while True:
         size = tuner.parallel
@@ -642,7 +697,9 @@ def translate_feed(
         busy += elapsed
         done = sum(len(v) for v in values)
         tuner.observe(size, len(batches) == size, done, elapsed)
-        fallbacks += missed
+        fallbacks += sum(missed.values())
+        for key, n in missed.items():
+            reasons[key] = reasons.get(key, 0) + n
         for v in values:
             output.extend(v)
         if on_progress:
@@ -653,4 +710,5 @@ def translate_feed(
         int(busy * 1000),
         parallel=tuner.parallel,
         tuning=tuple(tuner.samples),
+        fallback_reasons=tuple(sorted(reasons.items())),
     )
