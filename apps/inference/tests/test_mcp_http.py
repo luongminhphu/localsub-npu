@@ -130,6 +130,11 @@ def test_request_rate_limit(settings):
         ("https://perplexity.ai.evil.example", 403),
         ("null", 403),
         ("https://www.perplexity.ai", 200),
+        ("https://claude.ai", 200),
+        ("https://claude.com", 200),
+        ("http://claude.ai", 403),
+        ("https://claude.ai.evil.example", 403),
+        ("https://notclaude.ai", 403),
         ("http://localhost:5173", 200),
         ("http://127.0.0.1", 200),
     ],
@@ -159,6 +164,60 @@ def test_unknown_path_is_404(app):
 def test_trailing_slash_and_query_are_accepted(app):
     payload = body("ping", {"_meta": meta()})
     assert post(app, modern_headers("ping"), payload, path="/mcp/?x=1")[0] == 200
+
+
+# ------------------------------------------------------------------- key in the URL (claude.ai)
+
+
+def _no_auth_headers(method: str) -> dict[str, str]:
+    headers = modern_headers(method)
+    del headers["authorization"]
+    return headers
+
+
+def test_key_in_url_authenticates_without_headers(app):
+    params = {"name": "localsub_list_jobs", "arguments": {"limit": 1}, "_meta": meta()}
+    headers = _no_auth_headers("tools/call")
+    headers["mcp-name"] = "localsub_list_jobs"
+    status, payload, _ = post(app, headers, body("tools/call", params), path=f"/mcp/{TOKEN}")
+    assert status == 200 and payload["result"]["structuredContent"]["count"] == 1
+    assert post(app, headers, body("tools/call", params), path=f"/mcp/{TOKEN}/?x=1")[0] == 200
+
+
+def test_legacy_initialize_with_key_in_url(app):
+    headers = {"content-type": "application/json", "origin": "https://claude.ai"}
+    init = {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "claude"}}
+    status, payload, _ = post(app, headers, body("initialize", init), path=f"/mcp/{TOKEN}")
+    assert status == 200 and payload["result"]["protocolVersion"] == "2025-06-18"
+
+
+@pytest.mark.parametrize("path", ["/mcp/wrong-key", f"/mcp/{TOKEN}x", "/mcp/%20"])
+def test_wrong_key_in_url_is_401(app, path):
+    status, _, _ = post(app, _no_auth_headers("ping"), body("ping", {"_meta": meta()}), path=path)
+    assert status == 401
+
+
+@pytest.mark.parametrize("path", [f"/mcp/{TOKEN}/extra", f"/other/{TOKEN}", "/mcpx"])
+def test_other_paths_are_404(app, path):
+    assert post(app, modern_headers("ping"), body("ping", {"_meta": meta()}), path=path)[0] == 404
+
+
+def test_key_in_url_is_not_audited(app, settings):
+    post(app, _no_auth_headers("ping"), body("ping", {"_meta": meta()}), path=f"/mcp/{TOKEN}")
+    post(app, _no_auth_headers("ping"), body("ping", {"_meta": meta()}), path="/mcp/guess")
+    text = (settings.output_dir / "logs" / "mcp_http.jsonl").read_text()
+    entries = [json.loads(line) for line in text.splitlines()]
+    assert [e["path"] for e in entries] == ["/mcp/***", "/mcp/***"]
+    assert [e["auth"] for e in entries] == ["ok", "failed"]
+    assert TOKEN not in text and "guess" not in text
+
+
+def test_split_endpoint():
+    assert mcp_http.split_endpoint("/mcp") == (True, None)
+    assert mcp_http.split_endpoint("/mcp/?a=1") == (True, None)
+    assert mcp_http.split_endpoint("/mcp/a%2Bb") == (True, "a+b")
+    assert mcp_http.split_endpoint("/mcp/a/b") == (False, None)
+    assert mcp_http.split_endpoint("/") == (False, None)
 
 
 def test_body_too_large_and_wrong_content_type(app):

@@ -1,16 +1,20 @@
-"""Streamable HTTP transport for the read-only MCP server (for Perplexity custom connectors).
+"""Streamable HTTP transport for the read-only MCP server (Perplexity and claude.ai connectors).
 
-Perplexity (web, Windows app, Comet, Computer) only talks to *remote* MCP servers over HTTPS.
+Perplexity (web, Windows app, Comet, Computer) and claude.ai custom connectors only talk to
+*remote* MCP servers over HTTPS.
 This module serves the same :class:`app.mcp_server.LocalSubMcp` dispatcher on
 ``http://127.0.0.1:<port>/mcp``; the desktop app then opens an HTTPS tunnel (cloudflared) to it.
 
 Security model (the endpoint may be reachable from the internet through the tunnel):
 
 * binds to loopback only; every request needs the API key (``Authorization: Bearer <key>``,
-  a raw ``Authorization: <key>`` or ``X-API-Key: <key>``), compared in constant time;
+  a raw ``Authorization: <key>``, ``X-API-Key: <key>`` or, for clients that cannot send
+  headers such as claude.ai custom connectors, a secret URL ``/mcp/<key>``), compared in
+  constant time; the key in the URL is never written to the audit log;
 * the key is random (``secrets.token_urlsafe(32)``), stored in ``<data>/mcp/http-token`` and
   can be rotated; ``LOCALSUB_MCP_TOKEN`` (>= 24 chars) overrides it;
-* ``Origin`` is validated (DNS rebinding): absent, localhost or ``*.perplexity.ai`` only;
+* ``Origin`` is validated (DNS rebinding): absent, localhost, ``*.perplexity.ai``,
+  ``claude.ai`` or ``claude.com`` only;
 * 1 MB body limit, no batches, request and failed-auth rate limits (HTTP 429);
 * tools stay read-only and paths are redacted unless ``--no-redact``;
 * every request is written to ``<output>/logs/mcp_http.jsonl`` (no key, no arguments).
@@ -37,7 +41,7 @@ from datetime import UTC, datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import IO, Any
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
 from app.config import Settings
 from app.mcp_server import (
@@ -54,6 +58,7 @@ from app.mcp_server import (
 )
 
 ENDPOINT = "/mcp"
+TRUSTED_ORIGIN_DOMAINS = ("perplexity.ai", "claude.ai", "claude.com")
 DEFAULT_PORT = 8765
 HOST = "127.0.0.1"
 MAX_BODY = 1_000_000
@@ -126,7 +131,8 @@ def allowed_origins_from_env() -> set[str]:
 
 
 def origin_allowed(origin: str | None, extra: set[str] | None = None) -> bool:
-    """Absent Origin (server-to-server) is fine; browsers must come from localhost or Perplexity."""
+    """Absent Origin (server-to-server) is fine; browsers must come from localhost or a trusted
+    AI client domain (Perplexity, Claude) over HTTPS."""
     if origin is None:
         return True
     origin = origin.strip().rstrip("/")
@@ -141,7 +147,30 @@ def origin_allowed(origin: str | None, extra: set[str] | None = None) -> bool:
         return False
     if host in ("localhost", "127.0.0.1", "::1"):
         return True
-    return parts.scheme == "https" and (host == "perplexity.ai" or host.endswith(".perplexity.ai"))
+    return parts.scheme == "https" and any(
+        host == domain or host.endswith("." + domain) for domain in TRUSTED_ORIGIN_DOMAINS
+    )
+
+
+def split_endpoint(path: str) -> tuple[bool, str | None]:
+    """``(is_endpoint, key_in_path)``: ``/mcp`` -> (True, None); ``/mcp/<key>`` -> (True, key)."""
+    clean = path.split("?", 1)[0].rstrip("/")
+    if clean == ENDPOINT:
+        return True, None
+    prefix = ENDPOINT + "/"
+    if clean.startswith(prefix):
+        key = unquote(clean[len(prefix) :])
+        if key and "/" not in key:
+            return True, key
+    return False, None
+
+
+def audit_path(path: str) -> str:
+    """Request path for the audit log, with a key in the URL replaced by ``***``."""
+    is_endpoint, key = split_endpoint(path)
+    if is_endpoint and key is not None:
+        return ENDPOINT + "/***"
+    return path.split("?", 1)[0][:80]
 
 
 def decode_header_value(value: str) -> str:
@@ -328,7 +357,7 @@ class McpHttpApp:
         entry = {
             "ts": utc_now(),
             "http": verb,
-            "path": path.split("?", 1)[0][:80],
+            "path": audit_path(path),
             "method": info["rpc"],
             "name": info["name"],
             "status": response.status,
@@ -354,7 +383,8 @@ class McpHttpApp:
         body: bytes | None,
         info: dict[str, Any],
     ) -> HttpResponse:
-        if path.split("?", 1)[0].rstrip("/") != ENDPOINT:
+        is_endpoint, path_key = split_endpoint(path)
+        if not is_endpoint:
             return HttpResponse(404, {"error": "not found", "endpoint": ENDPOINT})
         if not origin_allowed(headers.get("origin"), self.allowed_origins):
             return HttpResponse(403, _error(None, INVALID_REQUEST, "Origin not allowed"))
@@ -368,7 +398,8 @@ class McpHttpApp:
             return HttpResponse(
                 429, {"error": "rate limit exceeded"}, Retry_After=str(self.requests.retry_after())
             )
-        if not token_matches(extract_token(headers), self.token):
+        given = path_key if path_key is not None else extract_token(headers)
+        if not token_matches(given, self.token):
             info["auth"] = "failed"
             self.auth_failures.allow()
             return HttpResponse(

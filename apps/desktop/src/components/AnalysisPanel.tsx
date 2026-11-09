@@ -1,16 +1,28 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { formatDuration, formatLocal, offsetLabel } from "../lib/format";
 import { useI18n, type MessageKey } from "../lib/i18n";
-import { countBySeverity, dataAgeMs, MCP_CLIENTS, mcpConfigJson, sortFindings, type McpClient } from "../lib/mcp";
+import {
+  claudeCodeSettingsJson,
+  countBySeverity,
+  dataAgeMs,
+  MCP_CLIENTS,
+  mcpConfigJson,
+  mergeClaudeDesktopConfig,
+  REMOTE_TARGET,
+  sortFindings,
+  type McpClient,
+  type RemoteTarget,
+} from "../lib/mcp";
 import type { AnalysisReport, McpLaunch, Severity } from "../lib/types";
 import type { WorkerBridge } from "../lib/worker";
-import { PerplexityConnect } from "./PerplexityConnect";
+import { RemoteConnect } from "./RemoteConnect";
 
 const LIMIT = 50;
 const SEVERITIES: Severity[] = ["high", "medium", "low", "info"];
 const STAGES = ["extract", "load_model", "inference", "load_translation_model", "translation", "total"] as const;
 
 type CopyState = { target: string; ok: boolean } | null;
+type InstallNote = { kind: "ok" | "error"; text: string; backup?: string | null } | null;
 
 async function copyText(text: string): Promise<boolean> {
   try {
@@ -32,6 +44,9 @@ export function AnalysisPanel(props: { bridge: WorkerBridge | null; refreshKey: 
   const [launchError, setLaunchError] = useState<string | null>(null);
   const [client, setClient] = useState<McpClient>("claude");
   const [copied, setCopied] = useState<CopyState>(null);
+  const [remoteTarget, setRemoteTarget] = useState<RemoteTarget>("perplexity");
+  const [installing, setInstalling] = useState(false);
+  const [installNote, setInstallNote] = useState<InstallNote>(null);
   const [now, setNow] = useState(() => new Date());
 
   const load = useCallback(async () => {
@@ -72,8 +87,9 @@ export function AnalysisPanel(props: { bridge: WorkerBridge | null; refreshKey: 
   const counts = countBySeverity(findings);
   const age = dataAgeMs(report, now);
   const generated = report ? new Date(report.generated_at) : null;
-  const isPerplexity = client === "perplexity";
-  const config = launch && !isPerplexity ? mcpConfigJson(launch, client) : "";
+  const remote = REMOTE_TARGET[client];
+  const isRemote = remote !== undefined;
+  const config = launch && !isRemote ? mcpConfigJson(launch, client) : "";
   const prompt = t("analysis.aiPrompt");
 
   const copy = async (target: string, text: string) => {
@@ -82,6 +98,48 @@ export function AnalysisPanel(props: { bridge: WorkerBridge | null; refreshKey: 
   };
   const copyLabel = (target: string, idle: MessageKey) =>
     copied?.target === target ? (copied.ok ? t("analysis.copied") : t("analysis.copyFailed")) : t(idle);
+
+  const selectClient = (next: McpClient) => {
+    setClient(next);
+    setInstallNote(null);
+    const target = REMOTE_TARGET[next];
+    if (target) setRemoteTarget(target);
+  };
+
+  /** Merge only mcpServers.localsub-npu into Claude Desktop's config, after confirmation. */
+  const installClaudeDesktop = async () => {
+    if (!bridge || !launch) return;
+    setInstalling(true);
+    setInstallNote(null);
+    let path = "claude_desktop_config.json";
+    try {
+      const file = await bridge.claudeDesktopConfig();
+      path = file.path;
+      let merged;
+      try {
+        merged = mergeClaudeDesktopConfig(file.text, launch);
+      } catch (err) {
+        const detail = String(err instanceof Error ? err.message : err).replace(/^INVALID_JSON: /, "");
+        setInstallNote({ kind: "error", text: t("claude.invalidJson", { path, error: detail }) });
+        return;
+      }
+      if (merged.unchanged) {
+        setInstallNote({ kind: "ok", text: t("claude.unchanged", { path }) });
+        return;
+      }
+      const ok = await bridge.confirm(
+        t(merged.replaced ? "claude.confirmReplace" : "claude.confirmInstall", { path }),
+        t("claude.confirmTitle"),
+      );
+      if (!ok) return;
+      const result = await bridge.writeClaudeDesktopConfig(merged.text);
+      setInstallNote({ kind: "ok", text: t("claude.installed", { path: result.path }), backup: result.backup });
+    } catch (err) {
+      setInstallNote({ kind: "error", text: t("claude.installFailed", { error: String(err) }) });
+    } finally {
+      setInstalling(false);
+    }
+  };
 
   return (
     <section className="panel analysis" aria-label={t("analysis.title")}>
@@ -188,7 +246,7 @@ export function AnalysisPanel(props: { bridge: WorkerBridge | null; refreshKey: 
             <p className="help-text">{t("analysis.mcpIntro")}</p>
             <p className="help-text">
               {t("analysis.mcpStatus", {
-                transport: isPerplexity ? "Streamable HTTP" : "stdio",
+                transport: isRemote ? "Streamable HTTP" : "stdio",
                 mode: launch ? (launch.bundled ? t("analysis.mcpBundled") : t("analysis.mcpSource")) : "—",
               })}
             </p>
@@ -205,13 +263,13 @@ export function AnalysisPanel(props: { bridge: WorkerBridge | null; refreshKey: 
                   role="radio"
                   aria-checked={client === c}
                   className={client === c ? "on" : ""}
-                  onClick={() => setClient(c)}
+                  onClick={() => selectClient(c)}
                 >
                   {t(`analysis.client.${c}` as MessageKey)}
                 </button>
               ))}
             </div>
-            {!isPerplexity && (
+            {!isRemote && (
               <>
                 <p className="help-text">{t(`analysis.where.${client}` as MessageKey)}</p>
                 <pre className="mcp-config" aria-label={t("analysis.mcpConfig")} tabIndex={0}>
@@ -219,20 +277,50 @@ export function AnalysisPanel(props: { bridge: WorkerBridge | null; refreshKey: 
                 </pre>
               </>
             )}
+            {client === "claudecode" && (
+              <div className="mcp-extra">
+                <strong>{t("claudecode.settingsTitle")}</strong>
+                <p className="help-text">{t("claudecode.settingsHelp")}</p>
+                <pre className="mcp-config" tabIndex={0}>
+                  {claudeCodeSettingsJson()}
+                </pre>
+              </div>
+            )}
+            {client === "claude" && installNote && (
+              <div className={installNote.kind === "ok" ? "ok-text" : "error"} role="status">
+                <p>{installNote.text}</p>
+                {installNote.backup && <p className="help-text">{t("claude.backup", { path: installNote.backup })}</p>}
+              </div>
+            )}
           </>
         )}
-        <PerplexityConnect
+        <RemoteConnect
           bridge={bridge}
           launch={launch}
-          visible={isPerplexity}
+          visible={isRemote}
+          target={remote ?? remoteTarget}
           onCopy={(target, text) => void copy(target, text)}
           copyLabel={copyLabel}
         />
         {launch && (
           <div className="mcp-actions">
-            {!isPerplexity && (
-              <button type="button" onClick={() => void copy("config", config)}>
-                {copyLabel("config", "analysis.copyConfig")}
+            {client === "claude" && (
+              <button type="button" onClick={() => void installClaudeDesktop()} disabled={!bridge || installing}>
+                {t("claude.install")}
+              </button>
+            )}
+            {!isRemote && (
+              <button
+                type="button"
+                className={client === "claude" ? "secondary" : undefined}
+                onClick={() => void copy("config", config)}
+              >
+                {copyLabel("config", client === "claudecode" ? "analysis.copyCommand" : "analysis.copyConfig")}
+              </button>
+            )}
+            {client === "claudecode" && (
+              <button type="button" className="secondary" onClick={() => void copy("settings", claudeCodeSettingsJson())}>
+                {copyLabel("settings", "claudecode.copySettings")}
               </button>
             )}
             <button type="button" className="secondary" onClick={() => void copy("prompt", prompt)}>
@@ -240,7 +328,7 @@ export function AnalysisPanel(props: { bridge: WorkerBridge | null; refreshKey: 
             </button>
           </div>
         )}
-        {!isPerplexity && <p className="help-text mcp-privacy">{t("analysis.privacy")}</p>}
+        {!isRemote && <p className="help-text mcp-privacy">{t("analysis.privacy")}</p>}
       </div>
     </section>
   );

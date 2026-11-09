@@ -4,6 +4,8 @@
  */
 import type {
   AnalysisReport,
+  ClaudeDesktopConfigFile,
+  ClaudeDesktopWriteResult,
   Diagnostics,
   DownloadEvent,
   DownloadHandlers,
@@ -46,6 +48,10 @@ export interface WorkerBridge {
   history(limit: number): Promise<JobHistory>;
   analyze(limit: number): Promise<AnalysisReport>;
   mcpConfig(): Promise<McpLaunch>;
+  /** Read Claude Desktop's config file (nothing is changed). */
+  claudeDesktopConfig(): Promise<ClaudeDesktopConfigFile>;
+  /** Replace Claude Desktop's config file with `text`, keeping a backup of the old one. */
+  writeClaudeDesktopConfig(text: string): Promise<ClaudeDesktopWriteResult>;
   /** Perplexity: read-only MCP over HTTP on 127.0.0.1 (returns an unsubscribe function). */
   startMcpHttp(port: number, rotate: boolean, handlers: McpHttpHandlers): Promise<() => void>;
   stopMcpHttp(): Promise<boolean>;
@@ -171,6 +177,8 @@ async function tauriBridge(): Promise<WorkerBridge> {
     history: async (limit) => JSON.parse(await invoke<string>("job_history", { limit })) as JobHistory,
     analyze: async (limit) => JSON.parse(await invoke<string>("analyze_performance", { limit })) as AnalysisReport,
     mcpConfig: () => invoke<McpLaunch>("mcp_config"),
+    claudeDesktopConfig: () => invoke<ClaudeDesktopConfigFile>("claude_desktop_config"),
+    writeClaudeDesktopConfig: (text) => invoke<ClaudeDesktopWriteResult>("write_claude_desktop_config", { text }),
     startMcpHttp: async (port, rotate, handlers) => {
       const unlisten = await Promise.all([
         listen<string>("mcp-http-event", (e) => {
@@ -494,9 +502,23 @@ function previewBridge(): WorkerBridge {
       },
       bundled: true,
     }),
+    ...previewClaudeDesktop(),
     ...previewMcpHttp(),
     systemMetrics: async (sinceMs) => previewMetrics(sinceMs),
     confirm: async (message) => window.confirm(message),
+  };
+}
+
+/** In-memory claude_desktop_config.json with another server already configured. */
+function previewClaudeDesktop(): Pick<WorkerBridge, "claudeDesktopConfig" | "writeClaudeDesktopConfig"> {
+  const path = "C:\\Users\\you\\AppData\\Roaming\\Claude\\claude_desktop_config.json";
+  let text = JSON.stringify({ mcpServers: { filesystem: { command: "npx", args: ["-y", "fs"] } } }, null, 2);
+  return {
+    claudeDesktopConfig: async () => ({ path, exists: true, text }),
+    writeClaudeDesktopConfig: async (next) => {
+      text = next;
+      return { path, backup: `${path}.localsub.bak` };
+    },
   };
 }
 

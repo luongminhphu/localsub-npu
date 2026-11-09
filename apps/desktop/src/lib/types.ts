@@ -268,6 +268,19 @@ export interface McpLaunch {
   bundled: boolean;
 }
 
+/** Claude Desktop's claude_desktop_config.json as read by the Rust side. */
+export interface ClaudeDesktopConfigFile {
+  path: string;
+  exists: boolean;
+  text: string | null;
+}
+
+export interface ClaudeDesktopWriteResult {
+  path: string;
+  /** Copy of the previous file (`claude_desktop_config.json.localsub.bak`), if there was one. */
+  backup: string | null;
+}
+
 /** Status line from `mcp --http --events` (the worker's Streamable HTTP MCP server). */
 export interface McpHttpServerEvent {
   type: "mcp_http";

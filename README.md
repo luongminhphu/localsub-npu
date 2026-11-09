@@ -8,7 +8,7 @@
 - Sửa phụ đề trực tiếp trong bảng, xuất **SRT, VTT, TXT** và file dự án `.localsub.json`.
 - Media không bao giờ rời khỏi máy. Sau khi tải model lần đầu, không cần Internet và không cần API key.
 
-> Phiên bản hiện tại: **0.12.0 (kết nối Perplexity qua MCP: server HTTP chỉ đọc có khóa API + đường hầm HTTPS) · 0.11.0 (tab Phân tích (AI) và MCP server chỉ đọc để trợ lý AI phân tích hiệu suất, log) · 0.10.0 (thêm tiếng Hàn: nhận dạng và dịch Hàn → Việt/Anh) · 0.9.2 (trả runtime OpenVINO về 2026.4.0 như 0.8.0, tắt mặc định ép tốc độ tối đa EcoQoS) · 0.9.1 (tự phục hồi khi driver NPU bị reset giữa chừng) · 0.9.0 (Wave 7: giữ máy thức và chạy tốc độ tối đa khi xử lý, danh mục model dùng chung, thêm Qwen3.5 và Distil-Whisper)**. Có **bộ cài Windows** (không cần Python/Node/Rust) — xem
+> Phiên bản hiện tại: **0.13.0 (tối ưu MCP cho Claude: Claude Desktop ghi cấu hình một nút, Claude Code, connector Claude web/di động, kết quả tool gọn hơn ~45%) · 0.12.0 (kết nối Perplexity qua MCP: server HTTP chỉ đọc có khóa API + đường hầm HTTPS) · 0.11.0 (tab Phân tích (AI) và MCP server chỉ đọc để trợ lý AI phân tích hiệu suất, log) · 0.10.0 (thêm tiếng Hàn: nhận dạng và dịch Hàn → Việt/Anh) · 0.9.2 (trả runtime OpenVINO về 2026.4.0 như 0.8.0, tắt mặc định ép tốc độ tối đa EcoQoS) · 0.9.1 (tự phục hồi khi driver NPU bị reset giữa chừng) · 0.9.0 (Wave 7: giữ máy thức và chạy tốc độ tối đa khi xử lý, danh mục model dùng chung, thêm Qwen3.5 và Distil-Whisper)**. Có **bộ cài Windows** (không cần Python/Node/Rust) — xem
 > [Cài nhanh bằng bộ cài](#cài-nhanh-bằng-bộ-cài). Muốn phát triển hoặc chạy dòng lệnh thì cài từ mã nguồn (mục 2–6).
 
 ## Cài nhanh bằng bộ cài
@@ -317,10 +317,24 @@ kèm múi giờ) và thời điểm job mới nhất, để biết dữ liệu m
 **Kết nối trợ lý AI (MCP).** Worker có sẵn một [MCP](https://modelcontextprotocol.io/specification/2026-07-28) server
 **chỉ đọc**, chạy qua stdio: `localsub-worker.exe mcp` (bản cài) hoặc `python -m app.main mcp` (mã nguồn). Server hỗ trợ
 phiên bản giao thức 2026-07-28 (`server/discover`) và cả handshake `initialize` cũ (2025-11-25, 2025-06-18, 2025-03-26).
-Trong tab, chọn ứng dụng AI (Claude Desktop, VS Code hoặc Khác), bấm **Sao chép cấu hình** rồi dán vào:
+Trong tab, chọn ứng dụng AI:
 
-- Claude Desktop: `claude_desktop_config.json` (Settings → Developer → Edit Config), khởi động lại Claude.
-- VS Code: `.vscode/mcp.json` của workspace, bấm Start trên server `localsub-npu`.
+- **Claude Desktop**: bấm **Thêm vào Claude Desktop** (có hộp xác nhận). App chỉ thêm/thay mục `mcpServers.localsub-npu` trong
+  `%APPDATA%\Claude\claude_desktop_config.json` (bản Microsoft Store: `%LOCALAPPDATA%\Packages\Claude_*\LocalCache\Roaming\Claude\`),
+  giữ nguyên các server và cài đặt khác, sao lưu file cũ thành `claude_desktop_config.json.localsub.bak`; file không phải JSON hợp lệ
+  thì app không ghi đè. Sau đó thoát hẳn Claude (khay hệ thống → Quit) và mở lại. Vẫn có thể **Sao chép cấu hình** để dán thủ công
+  (Settings → Developer → Edit Config).
+- **Claude Code**: bấm **Sao chép lệnh** rồi chạy trong PowerShell. Lệnh thêm server ở phạm vi user nên dùng được trong mọi thư mục:
+
+  ```powershell
+  claude mcp add --transport stdio --scope user --env 'LOCALSUB_MODEL_DIR=...' --env 'LOCALSUB_OUTPUT_DIR=...' --env 'PYTHONUTF8=1' localsub-npu -- 'C:\Program Files\LocalSub NPU\worker\localsub-worker.exe' mcp
+  ```
+
+  Kiểm tra bằng `claude mcp list` hoặc `/mcp`. Để các tool chỉ đọc chạy không cần hỏi quyền, thêm `"mcp__localsub-npu"` vào
+  `permissions.allow` (nút **Sao chép settings**); repo này đã có sẵn quy tắc đó trong `.claude/settings.json`, nên khi mở Claude Code
+  trong bản clone repo để sửa mã, AI gọi `localsub_*` không bị hỏi lại.
+- **Claude (web, di động)**: xem [Kết nối Claude web/di động](#kết-nối-claude-web-và-di-động-0130).
+- **VS Code**: dán vào `.vscode/mcp.json` của workspace, bấm Start trên server `localsub-npu`.
 
 Cấu hình đã có sẵn đường dẫn worker và thư mục dữ liệu (`LOCALSUB_OUTPUT_DIR`, `LOCALSUB_MODEL_DIR`) nên AI đọc đúng
 nhật ký của app. Ví dụ (bản cài):
@@ -352,6 +366,10 @@ Công cụ (tool) AI được dùng:
 | `localsub_compare_jobs` | So sánh hai job từng bước (ví dụ trước/sau khi cập nhật) |
 | `localsub_models` | Danh mục model và trạng thái cài |
 | `localsub_optimization_plan` | Bản tóm tắt Markdown cho AI lập trình: phát hiện → bằng chứng → hàm cần sửa → quy trình test và mở pull request |
+
+Kết quả tool được tối ưu cho model (0.13.0): JSON không thụt lề và bỏ các trường `null` trong danh sách job (50 job: ~46 000 → ~25 000
+ký tự, dưới ngưỡng cảnh báo 10 000 token của Claude Code), mọi tham số có mô tả, và hướng dẫn server (`instructions`) nêu rõ thứ tự
+gọi: `localsub_analyze_performance` → `localsub_get_job` / `localsub_compare_jobs` → `localsub_optimization_plan`.
 
 Ngoài ra có resource `localsub://jobs/recent`, `localsub://analysis/latest`, `localsub://catalog` và prompt
 `optimize_localsub` (tham số `focus`: load, asr, translation, io, all), `diagnose_job` (`job_id`).
@@ -420,6 +438,22 @@ $env:LOCALSUB_MCP_TOKEN = "<khóa tự đặt, tối thiểu 24 ký tự>"   # b
 & $py -m app.main mcp --http --port 8765
 cloudflared tunnel --no-autoupdate --url http://127.0.0.1:8765
 ```
+
+### Kết nối Claude web và di động (0.13.0)
+
+claude.ai và ứng dụng Claude (máy tính, điện thoại) thêm MCP từ xa dưới dạng **custom connector** qua HTTPS, dùng chung server HTTP và
+đường hầm với Perplexity. Khác biệt: form của Claude chỉ có ô URL (hoặc OAuth), không có ô API key, nên khóa được gắn vào đường dẫn
+`https://<tên>.trycloudflare.com/mcp/<khóa>`. Trong tab **Phân tích (AI)** → chọn **Claude (web, di động)**:
+
+1. **Bật server** và **Mở đường hầm** như với Perplexity.
+2. Trong Claude: **Settings → Connectors → Add custom connector**, Name `LocalSub NPU`, Remote MCP server URL = URL ở bước 3 của
+   tab (nút **Sao chép**, URL đã chứa khóa), để trống OAuth Client ID/Secret, bấm **Add**.
+3. Trong khung chat, bật **LocalSub NPU** ở nút **+ → Connectors** và hỏi, ví dụ: "Phân tích hiệu suất các job gần đây của LocalSub".
+
+Bảo mật: khóa trong URL được so sánh thời gian hằng như header, sai khóa → 401 và tính vào giới hạn 10 lần/phút; nhật ký truy cập ghi
+đường dẫn là `/mcp/***`, không bao giờ ghi khóa. Origin `https://claude.ai` / `https://claude.com` được chấp nhận. Ai có URL là đọc
+được nhật ký job (đã ẩn đường dẫn), nên giữ URL như mật khẩu; lộ thì bấm **Đổi khóa API và bật lại** rồi thêm lại connector. Mỗi lần
+mở đường hầm nhanh, URL đổi, nên phải xóa connector cũ và thêm lại.
 
 ---
 
@@ -820,7 +854,8 @@ CI (GitHub Actions) chạy Python lint/test, frontend lint/type-check/test/build
 11. 0.10.0: tiếng Hàn là ngôn ngữ nói (nhận dạng `ko`, dịch Hàn → Việt/Anh, cắt câu theo chuẩn phụ đề tiếng Hàn). ✅
 12. 0.11.0: tab Phân tích (AI) và MCP server chỉ đọc (log, chẩn đoán, phân tích hiệu suất, kế hoạch tối ưu cho AI lập trình). ✅
 13. 0.12.0: kết nối Perplexity — MCP qua Streamable HTTP (khóa API, kiểm tra Origin, giới hạn tần suất, nhật ký truy cập) và đường hầm HTTPS Cloudflare ngay trong app. ✅
-14. Tiếp theo (backlog): MCP giai đoạn 2 (chạy benchmark/đổi cấu hình có xác nhận), đường hầm có tên để URL cố định, OAuth cho connector, tăng tốc nạp model, đo tốc độ Qwen3.5 trên GPU Arc, chẩn đoán rõ lỗi driver NPU, preset tốc độ/chất lượng, benchmark thiết bị ngay trong app, ký số bộ cài, kèm FFmpeg trong bộ cài, tự cập nhật.
+14. 0.13.0: tối ưu MCP cho Claude — Claude Desktop ghi cấu hình bằng một nút (có sao lưu), lệnh Claude Code + quyền chạy tool không cần hỏi, connector Claude web/di động (khóa trong URL), kết quả tool gọn hơn và mô tả tool rõ hơn. ✅
+15. Tiếp theo (backlog): MCP giai đoạn 2 (chạy benchmark/đổi cấu hình có xác nhận), đường hầm có tên để URL cố định, OAuth cho connector, tăng tốc nạp model, đo tốc độ Qwen3.5 trên GPU Arc, chẩn đoán rõ lỗi driver NPU, preset tốc độ/chất lượng, benchmark thiết bị ngay trong app, ký số bộ cài, kèm FFmpeg trong bộ cài, tự cập nhật.
 
 ## Giấy phép
 

@@ -2,17 +2,20 @@ import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { formatLocal, offsetLabel } from "../lib/format";
 import { useI18n, type MessageKey } from "../lib/i18n";
 import {
+  claudeConnectorUrl,
   CLOUDFLARED_INSTALL,
+  CONNECTOR_NAME,
   connectorUrl,
   DEFAULT_HTTP_PORT,
   INITIAL_HTTP_VIEW,
   isCloudflaredMissing,
+  maskedClaudeConnectorUrl,
   maskToken,
   mcpHttpReducer,
   ORPHAN,
   parsePort,
-  PERPLEXITY_CONNECTOR_NAME,
   portableStdioFields,
+  type RemoteTarget,
 } from "../lib/mcp";
 import type { McpLaunch } from "../lib/types";
 import type { WorkerBridge } from "../lib/worker";
@@ -20,18 +23,22 @@ import type { WorkerBridge } from "../lib/worker";
 const nowIso = () => new Date().toISOString();
 
 /**
- * Perplexity custom remote connector: starts the read-only HTTP MCP server on 127.0.0.1 and a
- * Cloudflare quick tunnel in front of it, then shows the URL + API key for the connector form.
- * Kept mounted (hidden) so listeners survive switching between AI apps.
+ * Remote connectors (Perplexity, Claude web/mobile): starts the read-only HTTP MCP server on
+ * 127.0.0.1 and a Cloudflare quick tunnel in front of it, then shows what the connector form
+ * needs: URL + API key for Perplexity, a URL carrying the key for Claude (no key field there).
+ * One instance serves both targets (same server and tunnel) and stays mounted while hidden so
+ * listeners survive switching between AI apps.
  */
-export function PerplexityConnect(props: {
+export function RemoteConnect(props: {
   bridge: WorkerBridge | null;
   launch: McpLaunch | null;
   visible: boolean;
+  target: RemoteTarget;
   onCopy: (target: string, text: string) => void;
   copyLabel: (target: string, idle: MessageKey) => string;
 }) {
-  const { bridge, launch, visible, onCopy, copyLabel } = props;
+  const { bridge, launch, visible, target, onCopy, copyLabel } = props;
+  const claude = target === "claude";
   const { t, locale } = useI18n();
   const [view, dispatch] = useReducer(mcpHttpReducer, INITIAL_HTTP_VIEW);
   const [portText, setPortText] = useState(String(DEFAULT_HTTP_PORT));
@@ -69,9 +76,10 @@ export function PerplexityConnect(props: {
 
   const startServer = async (rotate: boolean) => {
     if (!bridge || port === null) return;
+    const rotateKey = claude ? "claudeai.confirmRotate" : "pplx.confirmRotate";
     const ok = await bridge.confirm(
-      t(rotate ? "pplx.confirmRotate" : "pplx.confirmStart", { port }),
-      t("pplx.confirmTitle"),
+      t(rotate ? rotateKey : "pplx.confirmStart", { port }),
+      t(claude ? "claudeai.confirmTitle" : "pplx.confirmTitle"),
     );
     if (!ok) return;
     setBusy(true);
@@ -117,7 +125,7 @@ export function PerplexityConnect(props: {
 
   const startTunnel = async () => {
     if (!bridge || port === null) return;
-    const ok = await bridge.confirm(t("pplx.confirmTunnel"), t("pplx.confirmTitle"));
+    const ok = await bridge.confirm(t("pplx.confirmTunnel"), t(claude ? "claudeai.confirmTitle" : "pplx.confirmTitle"));
     if (!ok) return;
     setBusy(true);
     try {
@@ -158,6 +166,13 @@ export function PerplexityConnect(props: {
   const serverOn = view.server === "listening" || view.server === "starting";
   const tunnelOn = view.tunnel === "open" || view.tunnel === "starting";
   const endpoint = view.publicUrl ? connectorUrl(view.publicUrl) : null;
+  const claudeUrl = view.publicUrl && view.token ? claudeConnectorUrl(view.publicUrl, view.token) : null;
+  const claudeUrlShown =
+    view.publicUrl && view.token
+      ? showKey
+        ? claudeConnectorUrl(view.publicUrl, view.token)
+        : maskedClaudeConnectorUrl(view.publicUrl, view.token)
+      : null;
   const orphan = view.error === ORPHAN;
   const errorText = view.error && !orphan ? view.error : null;
   const stdio = launch ? portableStdioFields(launch) : null;
@@ -165,7 +180,7 @@ export function PerplexityConnect(props: {
 
   return (
     <div className="pplx" hidden={!visible}>
-      <p className="help-text">{t("pplx.intro")}</p>
+      <p className="help-text">{t(claude ? "claudeai.intro" : "pplx.intro")}</p>
 
       <dl className="pplx-status" aria-live="polite">
         <div>
@@ -248,7 +263,7 @@ export function PerplexityConnect(props: {
         </li>
 
         <li>
-          <strong>{t("pplx.step2")}</strong>
+          <strong>{t(claude ? "claudeai.step2" : "pplx.step2")}</strong>
           {cloudflared === null && (
             <div className="pplx-install">
               <p className="warn">{t("pplx.noCloudflared")}</p>
@@ -282,74 +297,121 @@ export function PerplexityConnect(props: {
           <p className="help-text">{t("pplx.tunnelHelp")}</p>
         </li>
 
-        <li>
-          <strong>{t("pplx.step3")}</strong>
-          <p className="help-text">{t("pplx.where")}</p>
-          <table className="pplx-fields">
-            <tbody>
-              <tr>
-                <th scope="row">Name</th>
-                <td>
-                  <code className="pplx-value">{PERPLEXITY_CONNECTOR_NAME}</code>
-                </td>
-                <td />
-              </tr>
-              <tr>
-                <th scope="row">MCP Server URL</th>
-                <td>
-                  {endpoint ? (
-                    <code className="pplx-value">{endpoint}</code>
-                  ) : (
-                    <span className="pplx-pending">{t("pplx.urlPending")}</span>
-                  )}
-                </td>
-                <td>
-                  <button type="button" className="secondary" disabled={!endpoint} onClick={() => endpoint && onCopy("url", endpoint)}>
-                    {copyLabel("url", "pplx.copy")}
-                  </button>
-                </td>
-              </tr>
-              <tr>
-                <th scope="row">Authentication</th>
-                <td>
-                  <code className="pplx-value">API Key</code>
-                </td>
-                <td />
-              </tr>
-              <tr>
-                <th scope="row">API Key</th>
-                <td>
-                  {view.token ? (
-                    <code className="pplx-value">{showKey ? view.token : maskToken(view.token)}</code>
-                  ) : (
-                    <span className="pplx-pending">{t("pplx.keyPending")}</span>
-                  )}
-                </td>
-                <td className="pplx-key-actions">
-                  <button type="button" className="link" disabled={!view.token} onClick={() => setShowKey((v) => !v)}>
-                    {showKey ? t("pplx.hide") : t("pplx.show")}
-                  </button>
-                  <button
-                    type="button"
-                    className="secondary"
-                    disabled={!view.token}
-                    onClick={() => view.token && onCopy("key", view.token)}
-                  >
-                    {copyLabel("key", "pplx.copy")}
-                  </button>
-                </td>
-              </tr>
-              <tr>
-                <th scope="row">Transport</th>
-                <td>
-                  <code className="pplx-value">Streamable HTTP</code>
-                </td>
-                <td />
-              </tr>
-            </tbody>
-          </table>
-          <p className="help-text">{t("pplx.urlChanges")}</p>
-        </li>
+        {claude ? (
+          <li>
+            <strong>{t("claudeai.step3")}</strong>
+            <p className="help-text">{t("claudeai.where")}</p>
+            <table className="pplx-fields">
+              <tbody>
+                <tr>
+                  <th scope="row">Name</th>
+                  <td>
+                    <code className="pplx-value">{CONNECTOR_NAME}</code>
+                  </td>
+                  <td />
+                </tr>
+                <tr>
+                  <th scope="row">Remote MCP server URL</th>
+                  <td>
+                    {claudeUrlShown ? (
+                      <code className="pplx-value">{claudeUrlShown}</code>
+                    ) : (
+                      <span className="pplx-pending">{t(view.token ? "pplx.urlPending" : "pplx.keyPending")}</span>
+                    )}
+                  </td>
+                  <td>
+                    <div className="pplx-key-actions">
+                      <button type="button" className="link" disabled={!claudeUrl} onClick={() => setShowKey((v) => !v)}>
+                        {showKey ? t("pplx.hide") : t("pplx.show")}
+                      </button>
+                      <button
+                        type="button"
+                        className="secondary"
+                        disabled={!claudeUrl}
+                        onClick={() => claudeUrl && onCopy("claude-url", claudeUrl)}
+                      >
+                        {copyLabel("claude-url", "pplx.copy")}
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+            <p className="warn">{t("claudeai.urlSecret")}</p>
+            <p className="help-text">{t("claudeai.urlChanges")}</p>
+          </li>
+        ) : (
+          <li>
+            <strong>{t("pplx.step3")}</strong>
+            <p className="help-text">{t("pplx.where")}</p>
+            <table className="pplx-fields">
+              <tbody>
+                <tr>
+                  <th scope="row">Name</th>
+                  <td>
+                    <code className="pplx-value">{CONNECTOR_NAME}</code>
+                  </td>
+                  <td />
+                </tr>
+                <tr>
+                  <th scope="row">MCP Server URL</th>
+                  <td>
+                    {endpoint ? (
+                      <code className="pplx-value">{endpoint}</code>
+                    ) : (
+                      <span className="pplx-pending">{t("pplx.urlPending")}</span>
+                    )}
+                  </td>
+                  <td>
+                    <button type="button" className="secondary" disabled={!endpoint} onClick={() => endpoint && onCopy("url", endpoint)}>
+                      {copyLabel("url", "pplx.copy")}
+                    </button>
+                  </td>
+                </tr>
+                <tr>
+                  <th scope="row">Authentication</th>
+                  <td>
+                    <code className="pplx-value">API Key</code>
+                  </td>
+                  <td />
+                </tr>
+                <tr>
+                  <th scope="row">API Key</th>
+                  <td>
+                    {view.token ? (
+                      <code className="pplx-value">{showKey ? view.token : maskToken(view.token)}</code>
+                    ) : (
+                      <span className="pplx-pending">{t("pplx.keyPending")}</span>
+                    )}
+                  </td>
+                  <td>
+                    <div className="pplx-key-actions">
+                      <button type="button" className="link" disabled={!view.token} onClick={() => setShowKey((v) => !v)}>
+                        {showKey ? t("pplx.hide") : t("pplx.show")}
+                      </button>
+                      <button
+                        type="button"
+                        className="secondary"
+                        disabled={!view.token}
+                        onClick={() => view.token && onCopy("key", view.token)}
+                      >
+                        {copyLabel("key", "pplx.copy")}
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+                <tr>
+                  <th scope="row">Transport</th>
+                  <td>
+                    <code className="pplx-value">Streamable HTTP</code>
+                  </td>
+                  <td />
+                </tr>
+              </tbody>
+            </table>
+            <p className="help-text">{t("pplx.urlChanges")}</p>
+          </li>
+        )}
       </ol>
 
       <p className="help-text mcp-privacy">
@@ -357,7 +419,7 @@ export function PerplexityConnect(props: {
         {view.auditLog ? ` ${t("pplx.audit", { path: view.auditLog })}` : ""}
       </p>
 
-      {stdio && (
+      {stdio && !claude && (
         <details className="pplx-portable">
           <summary>{t("pplx.portableTitle")}</summary>
           <p className="help-text">{t("pplx.portableHelp")}</p>

@@ -137,3 +137,19 @@ The Rust side (`src/mcp_http.rs`, `main.rs`) keeps two child slots in `McpHttpSt
 (`start_mcp_http` / `stop_mcp_http`) and `cloudflared tunnel --url http://127.0.0.1:<port>`
 (`start_tunnel` / `stop_tunnel`), whose stderr is parsed for the `https://*.trycloudflare.com` URL.
 Both are killed on `RunEvent::Exit`.
+
+### MCP for Claude (0.13.0)
+
+- Claude Desktop: the Rust `claude_desktop` module finds `claude_desktop_config.json` (an existing
+  Microsoft Store copy under `%LOCALAPPDATA%\Packages\Claude_*\LocalCache\Roaming\Claude` wins over
+  `%APPDATA%\Claude`), reads it (BOM stripped) and writes it back atomically after copying the old file
+  to `claude_desktop_config.json.localsub.bak`. The merge runs in the UI (`mergeClaudeDesktopConfig`):
+  only `mcpServers.localsub-npu` is added or replaced; invalid JSON is never overwritten.
+- Claude Code: the UI builds a PowerShell-quoted `claude mcp add --scope user ... -- <worker> mcp`
+  command; `.claude/settings.json` in the repo allows `mcp__localsub-npu` so the read-only tools run
+  without prompts while Claude Code works on this codebase.
+- claude.ai custom connectors cannot send an API key header, so `mcp_http` also accepts the key as the
+  last path segment (`/mcp/<key>`, constant-time compare, counted as a failed auth when wrong, logged
+  as `/mcp/***`). `claude.ai` / `claude.com` are allowed Origins.
+- Tool output is compact JSON and job summaries omit null fields (about 45% fewer characters for 50
+  jobs); every input property has a description and the server instructions state the call order.

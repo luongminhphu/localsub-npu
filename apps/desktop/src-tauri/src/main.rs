@@ -1,5 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod claude_desktop;
 mod mcp_http;
 mod metrics;
 mod worker;
@@ -245,6 +246,18 @@ fn mcp_config() -> Result<worker::McpLaunch, String> {
     worker::mcp_config()
 }
 
+/// Claude Desktop's config file (path + current text); nothing is changed here.
+#[tauri::command]
+fn claude_desktop_config() -> Result<claude_desktop::ConfigFile, String> {
+    claude_desktop::read_config(&claude_desktop::config_path()?)
+}
+
+/// Write the merged Claude Desktop config (built and confirmed in the UI) after a backup.
+#[tauri::command]
+fn write_claude_desktop_config(text: String) -> Result<claude_desktop::WriteResult, String> {
+    claude_desktop::write_config(&claude_desktop::config_path()?, &text)
+}
+
 #[tauri::command]
 async fn export_project(
     project_json: String,
@@ -428,6 +441,8 @@ fn main() {
             job_history,
             analyze_performance,
             mcp_config,
+            claude_desktop_config,
+            write_claude_desktop_config,
             start_mcp_http,
             stop_mcp_http,
             mcp_http_status,
