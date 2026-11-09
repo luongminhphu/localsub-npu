@@ -108,17 +108,19 @@ describe("Claude Code", () => {
   it("builds a user-scoped claude mcp add command", () => {
     const cmd = claudeCodeCommand(launch);
     expect(cmd).toBe(
-      "claude mcp add --transport stdio --scope user " +
-        "--env 'LOCALSUB_OUTPUT_DIR=C:\\Users\\u\\AppData\\Local\\com.luongminhphu.localsubnpu\\output' " +
-        "--env 'PYTHONUTF8=1' localsub-npu -- 'C:\\Program Files\\LocalSub NPU\\worker\\localsub-worker.exe' mcp",
+      "claude mcp add localsub-npu --transport stdio --scope user " +
+        "-e 'LOCALSUB_OUTPUT_DIR=C:\\Users\\u\\AppData\\Local\\com.luongminhphu.localsubnpu\\output' " +
+        "-e 'PYTHONUTF8=1' -- 'C:\\Program Files\\LocalSub NPU\\worker\\localsub-worker.exe' mcp",
     );
+    // The name must precede the variadic -e values, or the CLI reads it as an env entry.
+    expect(cmd.indexOf("localsub-npu")).toBeLessThan(cmd.indexOf(" -e "));
     expect(mcpConfigJson(launch, "claudecode")).toBe(cmd);
   });
 
   it("source mode keeps python -m app.main mcp after --", () => {
     const source = { ...launch, command: "C:\\py\\python.exe", args: ["-m", "app.main", "mcp"], env: {} };
     expect(claudeCodeCommand(source)).toBe(
-      "claude mcp add --transport stdio --scope user localsub-npu -- 'C:\\py\\python.exe' -m app.main mcp",
+      "claude mcp add localsub-npu --transport stdio --scope user -- 'C:\\py\\python.exe' -m app.main mcp",
     );
   });
 

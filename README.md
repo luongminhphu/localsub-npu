@@ -327,10 +327,10 @@ Trong tab, chọn ứng dụng AI:
 - **Claude Code**: bấm **Sao chép lệnh** rồi chạy trong PowerShell. Lệnh thêm server ở phạm vi user nên dùng được trong mọi thư mục:
 
   ```powershell
-  claude mcp add --transport stdio --scope user --env 'LOCALSUB_MODEL_DIR=...' --env 'LOCALSUB_OUTPUT_DIR=...' --env 'PYTHONUTF8=1' localsub-npu -- 'C:\Program Files\LocalSub NPU\worker\localsub-worker.exe' mcp
+  claude mcp add localsub-npu --transport stdio --scope user -e 'LOCALSUB_MODEL_DIR=...' -e 'LOCALSUB_OUTPUT_DIR=...' -e 'PYTHONUTF8=1' -- 'C:\Program Files\LocalSub NPU\worker\localsub-worker.exe' mcp
   ```
 
-  Kiểm tra bằng `claude mcp list` hoặc `/mcp`. Để các tool chỉ đọc chạy không cần hỏi quyền, thêm `"mcp__localsub-npu"` vào
+  Tên server phải đứng ngay sau `add` (đặt sau `-e` sẽ báo `Invalid environment variable format`). Kiểm tra bằng `claude mcp list` hoặc `/mcp`. Để các tool chỉ đọc chạy không cần hỏi quyền, thêm `"mcp__localsub-npu"` vào
   `permissions.allow` (nút **Sao chép settings**); repo này đã có sẵn quy tắc đó trong `.claude/settings.json`, nên khi mở Claude Code
   trong bản clone repo để sửa mã, AI gọi `localsub_*` không bị hỏi lại.
 - **Claude (web, di động)**: xem [Kết nối Claude web/di động](#kết-nối-claude-web-và-di-động-0130).
