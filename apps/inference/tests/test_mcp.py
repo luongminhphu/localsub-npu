@@ -127,6 +127,24 @@ def test_list_and_get_job(server) -> None:
     assert "market-briefing" not in json.dumps(record)
 
 
+def test_tool_text_is_compact_and_omits_nulls(server) -> None:
+    result = call(server, "localsub_list_jobs", {"limit": 2})
+    text = result["content"][0]["text"]
+    assert "\n" not in text and ": " not in text  # no indentation or padding
+    assert json.loads(text) == result["structuredContent"]
+    for summary in result["structuredContent"]["jobs"]:
+        assert None not in summary.values()
+        assert "finished_at" not in summary  # null in the fixture, so omitted
+
+
+def test_tool_schemas_describe_parameters(server) -> None:
+    tools = {t["name"]: t for t in rpc(server, "tools/list", {"_meta": meta()})["result"]["tools"]}
+    for tool in tools.values():
+        for name, prop in tool["inputSchema"]["properties"].items():
+            assert prop.get("description"), f"{tool['name']}.{name} has no description"
+    assert tools["localsub_analyze_performance"]["description"].startswith("Start here")
+
+
 def test_compare_and_plan(server) -> None:
     cmp = call(server, "localsub_compare_jobs", {"job_a": "fast", "job_b": "slow"})
     assert cmp["structuredContent"]["timings"]["load_model"]["delta_ms"] == 1000

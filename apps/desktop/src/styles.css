@@ -283,6 +283,8 @@ textarea { min-width: 160px; padding: 4px 8px; font-size: 0.88rem; }
 .mcp-clients button.on { background: #0e7490; border-color: #22d3ee; color: #ecfeff; }
 .mcp-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
 .mcp-actions button { padding: 8px 14px; }
+.mcp-extra { margin-top: 12px; }
+.mcp-extra > strong { display: block; font-size: 0.88rem; }
 .finding-id { background: transparent; padding: 0; border: 0; font-size: 0.74rem; color: #94a3b8; }
 .analysis .mcp-privacy { margin-top: 14px; }
 .stage-table th { white-space: nowrap; }
@@ -311,7 +313,7 @@ textarea { min-width: 160px; padding: 4px 8px; font-size: 0.88rem; }
 .pplx-fields td { padding: 4px 6px 4px 0; vertical-align: top; min-width: 0; }
 .pplx-fields td:last-child { width: 1%; white-space: nowrap; text-align: right; }
 .pplx-fields button { padding: 5px 10px; font-size: 0.8rem; }
-.pplx-key-actions { display: flex; gap: 6px; justify-content: flex-end; }
+.pplx-key-actions { display: inline-flex; gap: 6px; justify-content: flex-end; }
 .pplx-install { margin: 4px 0; }
 .pplx-portable { margin-top: 12px; }
 .pplx-portable summary { cursor: pointer; font-weight: 600; }

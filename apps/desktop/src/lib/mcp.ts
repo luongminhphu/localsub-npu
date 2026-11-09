@@ -1,18 +1,28 @@
 import type { AnalysisReport, Finding, McpHttpEvent, McpHttpRequestEvent, McpLaunch, Severity } from "./types";
 
-export type McpClient = "claude" | "vscode" | "perplexity" | "generic";
-export const MCP_CLIENTS: McpClient[] = ["claude", "vscode", "perplexity", "generic"];
+export type McpClient = "claude" | "claudecode" | "claudeai" | "vscode" | "perplexity" | "generic";
+export const MCP_CLIENTS: McpClient[] = ["claude", "claudecode", "claudeai", "vscode", "perplexity", "generic"];
+/** Clients that reach the server over the internet (HTTP server + HTTPS tunnel). */
+export type RemoteTarget = "perplexity" | "claude";
+export const REMOTE_TARGET: Partial<Record<McpClient, RemoteTarget>> = { perplexity: "perplexity", claudeai: "claude" };
 export const DEFAULT_HTTP_PORT = 8765;
 export const PERPLEXITY_CONNECTOR_NAME = "LocalSub NPU";
+export const CONNECTOR_NAME = PERPLEXITY_CONNECTOR_NAME;
 export const CLOUDFLARED_INSTALL = "winget install --id Cloudflare.cloudflared";
 export const MCP_SERVER_NAME = "localsub-npu";
 
 const SEVERITY_RANK: Record<Severity, number> = { high: 0, medium: 1, low: 2, info: 3 };
 
-/** JSON snippet for each client. Claude Desktop has no `cwd`, so env carries the data folders. */
+/** Claude Desktop entry: no `cwd` support, so env carries the data folders. */
+export function claudeDesktopServer(launch: McpLaunch): Record<string, unknown> {
+  return { command: launch.command, args: launch.args, env: launch.env };
+}
+
+/** JSON snippet (or command, for Claude Code) for each stdio client. */
 export function mcpConfigJson(launch: McpLaunch, client: McpClient): string {
-  const server = { command: launch.command, args: launch.args, env: launch.env };
+  const server = claudeDesktopServer(launch);
   if (client === "claude") return JSON.stringify({ mcpServers: { [MCP_SERVER_NAME]: server } }, null, 2);
+  if (client === "claudecode") return claudeCodeCommand(launch);
   if (client === "vscode") {
     return JSON.stringify(
       { servers: { [MCP_SERVER_NAME]: { type: "stdio", ...server, cwd: launch.cwd } } },
@@ -21,6 +31,73 @@ export function mcpConfigJson(launch: McpLaunch, client: McpClient): string {
     );
   }
   return JSON.stringify({ name: MCP_SERVER_NAME, transport: "stdio", ...server, cwd: launch.cwd }, null, 2);
+}
+
+export interface MergedConfig {
+  text: string;
+  /** An entry named localsub-npu already existed (it is replaced). */
+  replaced: boolean;
+  /** The file already holds exactly this entry: nothing to write. */
+  unchanged: boolean;
+}
+
+/**
+ * Add or replace only `mcpServers.localsub-npu` in claude_desktop_config.json, keeping every
+ * other server and setting. Throws (instead of overwriting) when the file is not valid JSON.
+ */
+export function mergeClaudeDesktopConfig(existing: string | null, launch: McpLaunch): MergedConfig {
+  const trimmed = (existing ?? "").replace(/^\uFEFF/, "").trim();
+  let root: Record<string, unknown> = {};
+  if (trimmed) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(trimmed);
+    } catch (err) {
+      throw new Error(`INVALID_JSON: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("INVALID_JSON: not an object");
+    root = parsed as Record<string, unknown>;
+  }
+  const current = root.mcpServers ?? {};
+  if (!current || typeof current !== "object" || Array.isArray(current)) {
+    throw new Error("INVALID_JSON: mcpServers is not an object");
+  }
+  const servers = current as Record<string, unknown>;
+  const entry = claudeDesktopServer(launch);
+  const replaced = MCP_SERVER_NAME in servers;
+  const unchanged = replaced && JSON.stringify(servers[MCP_SERVER_NAME]) === JSON.stringify(entry);
+  const next = { ...root, mcpServers: { ...servers, [MCP_SERVER_NAME]: entry } };
+  return { text: `${JSON.stringify(next, null, 2)}\n`, replaced, unchanged };
+}
+
+/** Single-quoted PowerShell literal (works in Windows PowerShell 5.1 and PowerShell 7). */
+export function psQuote(value: string): string {
+  return /^[A-Za-z0-9_.-]+$/.test(value) ? value : `'${value.replace(/'/g, "''")}'`;
+}
+
+/**
+ * `claude mcp add` for Claude Code, user scope so it works from any folder (including a clone
+ * of the repo when asking Claude Code to fix what the analysis found). Options go before the
+ * server name, the server command after `--`.
+ */
+export function claudeCodeCommand(launch: McpLaunch): string {
+  const env = Object.entries(launch.env).flatMap(([k, v]) => ["--env", psQuote(`${k}=${v}`)]);
+  return [
+    "claude mcp add --transport stdio --scope user",
+    ...env,
+    MCP_SERVER_NAME,
+    "--",
+    psQuote(launch.command),
+    ...launch.args.map(psQuote),
+  ].join(" ");
+}
+
+/** Claude Code permission rule: every tool of this (read-only) server runs without a prompt. */
+export const CLAUDE_CODE_PERMISSION = `mcp__${MCP_SERVER_NAME}`;
+
+/** Snippet for ~/.claude/settings.json (or .claude/settings.local.json in a project). */
+export function claudeCodeSettingsJson(): string {
+  return JSON.stringify({ permissions: { allow: [CLAUDE_CODE_PERMISSION] } }, null, 2);
 }
 
 export function sortFindings(findings: Finding[]): Finding[] {
@@ -50,6 +127,19 @@ export function parsePort(text: string): number | null {
 /** Public MCP endpoint for the Perplexity connector form. */
 export function connectorUrl(publicUrl: string): string {
   return `${publicUrl.replace(/\/+$/, "")}/mcp`;
+}
+
+/**
+ * claude.ai custom connectors take only a URL (or OAuth), no API key header, so the key goes in
+ * the path: `/mcp/<key>`. The worker accepts it there and never logs it.
+ */
+export function claudeConnectorUrl(publicUrl: string, token: string): string {
+  return `${connectorUrl(publicUrl)}/${encodeURIComponent(token)}`;
+}
+
+/** Same URL with the key masked, for display. */
+export function maskedClaudeConnectorUrl(publicUrl: string, token: string): string {
+  return `${connectorUrl(publicUrl)}/${maskToken(token)}`;
 }
 
 export function maskToken(token: string): string {

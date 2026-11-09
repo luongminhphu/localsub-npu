@@ -1,8 +1,9 @@
 """Read-only Model Context Protocol (MCP) server over stdio.
 
-Lets an AI assistant (Claude Desktop, VS Code, Perplexity, ...) read LocalSub's job audit log,
-diagnostics and model catalog, run the performance analyzer and get an optimization brief
-that points at the code to change. It never starts jobs, downloads or deletes models.
+Lets an AI assistant (Claude Desktop, Claude Code, claude.ai, VS Code, Perplexity, ...) read
+LocalSub's job audit log, diagnostics and model catalog, run the performance analyzer and get
+an optimization brief that points at the code to change. It never starts jobs, downloads or
+deletes models.
 
 Dependency-free JSON-RPC 2.0 so it runs inside the frozen PyInstaller worker
 (``localsub-worker.exe mcp``). Supports MCP 2026-07-28 (stateless: ``server/discover`` and
@@ -46,13 +47,17 @@ JOB_ID_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,80}$")
 
 INSTRUCTIONS = (
     "LocalSub NPU is a Windows desktop app that makes subtitles locally with OpenVINO "
-    "(Whisper speech recognition + Qwen translation on NPU/GPU/CPU). This server is read-only. "
-    "Start with localsub_analyze_performance for findings, use localsub_get_job and "
-    "localsub_compare_jobs for evidence, and localsub_optimization_plan for a code-change brief "
-    "(source: github.com/luongminhphu/localsub-npu). Timestamps are UTC; the user is in "
-    "Asia/Ho_Chi_Minh (GMT+7). Paths are redacted unless the server was started with "
-    "--no-redact. Propose code changes as pull requests; never claim a fix is verified without "
-    "a new job record."
+    "(Whisper speech recognition + Qwen translation on NPU/GPU/CPU). This server is read-only: "
+    "it cannot start jobs or change settings.\n"
+    "Workflow: 1) localsub_analyze_performance (findings ranked by severity, with job_ids and "
+    "code_refs); 2) evidence with localsub_get_job / localsub_compare_jobs on those job_ids; "
+    "3) localsub_optimization_plan for a code-change brief "
+    "(source: github.com/luongminhphu/localsub-npu). Use localsub_diagnostics for setup "
+    "problems (devices, FFmpeg, models) and localsub_list_jobs to find job ids. "
+    "Prefer small limits; null fields are omitted from job summaries.\n"
+    "Timestamps are UTC; the user is in Asia/Ho_Chi_Minh (GMT+7) and reads Vietnamese. "
+    "Paths are redacted unless the server was started with --no-redact. Propose code changes "
+    "as pull requests; never claim a fix is verified without a new job record."
 )
 
 
@@ -76,6 +81,20 @@ class RpcError(Exception):
 
 class ToolError(Exception):
     """Reported to the model as ``isError: true`` so it can self-correct."""
+
+
+def drop_nulls(value: Any) -> Any:
+    """Omit ``None`` fields (recursively) so job summaries cost fewer model tokens."""
+    if isinstance(value, dict):
+        return {k: drop_nulls(v) for k, v in value.items() if v is not None}
+    if isinstance(value, list):
+        return [drop_nulls(v) for v in value]
+    return value
+
+
+def compact_json(value: Any) -> str:
+    """Tool text for the model: no indentation (about 40% fewer tokens than indent=1)."""
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
 
 
 # --------------------------------------------------------------------------- argument checks
@@ -185,7 +204,7 @@ class LocalSubMcp:
             records = [r for r in records if r.get("state") == state]
         if since:
             records = [r for r in records if str(r.get("started_at") or "") >= since]
-        jobs = [self._summary(r) for r in records[:limit]]
+        jobs = [drop_nulls(self._summary(r)) for r in records[:limit]]
         return to_jsonable(
             {
                 "log_found": self.log_path.is_file(),
@@ -234,8 +253,17 @@ class LocalSubMcp:
         )
 
     def tools(self) -> list[dict[str, Any]]:
-        limit = {"type": "integer", "minimum": 1, "maximum": analysis.MAX_LIMIT}
-        job_id = {"type": "string", "pattern": JOB_ID_RE.pattern}
+        limit = {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": analysis.MAX_LIMIT,
+            "description": "How many of the most recent jobs to read",
+        }
+        job_id = {
+            "type": "string",
+            "pattern": JOB_ID_RE.pattern,
+            "description": "Job id from localsub_list_jobs or a finding's job_ids",
+        }
         read_only = {"readOnlyHint": True, "destructiveHint": False, "openWorldHint": False}
 
         def tool(name, title, description, properties=None, required=None):
@@ -258,17 +286,23 @@ class LocalSubMcp:
             tool(
                 "localsub_diagnostics",
                 "Diagnostics",
-                "FFmpeg/OpenVINO status, available devices (NPU/GPU/CPU), installed models, "
-                "whether the compile cache exists and when the last job ran.",
+                "Setup health: FFmpeg/OpenVINO status, available devices (NPU/GPU/CPU), installed "
+                "models, whether the compile cache (.ov-cache) exists and when the last job ran. "
+                "Use first when jobs fail or a device is missing.",
             ),
             tool(
                 "localsub_list_jobs",
                 "List jobs",
                 "Recent jobs from the audit log, newest first: state, models, devices, media "
-                "duration, stage timings (ms), ASR real-time factor, OpenVINO version.",
+                "duration, stage timings (ms), real-time factors, OpenVINO version. Null fields "
+                "are omitted. Use to find job ids; keep limit small (default 20).",
                 {
                     "limit": {**limit, "default": 20},
-                    "state": {"type": "string", "enum": ["completed", "failed", "cancelled"]},
+                    "state": {
+                        "type": "string",
+                        "enum": ["completed", "failed", "cancelled"],
+                        "description": "Only jobs that ended in this state",
+                    },
                     "since": {
                         "type": "string",
                         "description": "ISO 8601 UTC lower bound for started_at",
@@ -279,26 +313,38 @@ class LocalSubMcp:
                 "localsub_get_job",
                 "Get job",
                 "Full audit record of one job: state transitions with timestamps, every timing, "
-                "device attempts and fallbacks, translation tuning, recoveries, error.",
+                "device attempts and fallbacks, translation tuning, recoveries, error. Use on the "
+                "job_ids of a finding to explain it with numbers.",
                 {"job_id": job_id},
                 ["job_id"],
             ),
             tool(
                 "localsub_analyze_performance",
                 "Analyze performance",
-                "Rule-based analysis of recent jobs. Returns findings (severity, evidence, "
-                "recommendation, code_refs) and per-stage/per-model statistics.",
+                "Start here. Rule-based analysis of recent jobs: findings (id, severity, "
+                "evidence, recommendation, job_ids, code_refs) and per-stage/per-model "
+                "statistics. Optionally restrict to job_ids.",
                 {
                     "limit": {**limit, "default": analysis.DEFAULT_LIMIT},
-                    "job_ids": {"type": "array", "items": job_id, "minItems": 1, "maxItems": 50},
+                    "job_ids": {
+                        "type": "array",
+                        "items": job_id,
+                        "minItems": 1,
+                        "maxItems": 50,
+                        "description": "Analyze only these jobs (overrides limit)",
+                    },
                 },
             ),
             tool(
                 "localsub_compare_jobs",
                 "Compare jobs",
                 "Stage-by-stage timing delta (b minus a) and configuration differences between "
-                "two jobs, e.g. before and after an update.",
-                {"job_a": job_id, "job_b": job_id},
+                "two jobs, e.g. a slow job against a fast one with the same model and device, or "
+                "before and after an update.",
+                {
+                    "job_a": {**job_id, "description": "Baseline job id"},
+                    "job_b": {**job_id, "description": "Job id compared against job_a"},
+                },
                 ["job_a", "job_b"],
             ),
             tool(
@@ -310,11 +356,17 @@ class LocalSubMcp:
             tool(
                 "localsub_optimization_plan",
                 "Optimization plan",
-                "Markdown brief for a coding agent: each finding with evidence, the source "
-                "functions to inspect and a test-first workflow ending in a pull request.",
+                "Markdown brief for a coding agent with repository access: each finding with "
+                "evidence, the source functions to inspect and a test-first workflow ending in a "
+                "pull request. Use language 'vi' when answering the user directly.",
                 {
                     "limit": {**limit, "default": analysis.DEFAULT_LIMIT},
-                    "language": {"type": "string", "enum": ["en", "vi"], "default": "en"},
+                    "language": {
+                        "type": "string",
+                        "enum": ["en", "vi"],
+                        "default": "en",
+                        "description": "Language of the brief",
+                    },
                 },
             ),
         ]
@@ -354,7 +406,7 @@ class LocalSubMcp:
             text, structured = result
         else:
             structured = result
-            text = json.dumps(result, ensure_ascii=False, indent=1)
+            text = compact_json(result)
         return {"content": [{"type": "text", "text": text}], "structuredContent": structured}
 
     # ----------------------------------------------------------------- resources
@@ -390,7 +442,7 @@ class LocalSubMcp:
                 {
                     "uri": uri,
                     "mimeType": "application/json",
-                    "text": json.dumps(data, ensure_ascii=False, indent=1),
+                    "text": compact_json(data),
                 }
             ],
             "ttlMs": 0,
