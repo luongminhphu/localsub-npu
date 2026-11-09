@@ -216,26 +216,40 @@ pub struct McpLaunch {
     pub bundled: bool,
 }
 
+/// Drop the Win32 verbatim prefix (`\\?\D:\x` -> `D:\x`, `\\?\UNC\srv\x` -> `\\srv\x`) that
+/// Tauri's resource dir carries. MCP clients receive these paths in config files and shell
+/// commands, where the prefix is confusing and some launchers reject it.
+pub fn plain_path(path: &Path) -> String {
+    let text = path.to_string_lossy();
+    if let Some(rest) = text.strip_prefix(r"\\?\UNC\") {
+        return format!(r"\\{rest}");
+    }
+    if let Some(rest) = text.strip_prefix(r"\\?\") {
+        let bytes = rest.as_bytes();
+        if bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' {
+            return rest.to_string();
+        }
+    }
+    text.into_owned()
+}
+
 pub fn mcp_launch(location: &WorkerLocation, app_data: Option<&Path>) -> McpLaunch {
     let mut env: std::collections::BTreeMap<String, String> = data_dir_defaults(location, app_data)
         .into_iter()
-        .map(|(k, v)| (k.to_string(), v.to_string_lossy().into_owned()))
+        .map(|(k, v)| (k.to_string(), plain_path(&v)))
         .collect();
     env.insert("PYTHONUTF8".into(), "1".into());
     let mut args = Vec::new();
     if !location.bundled {
         // Source mode: `python -m app.main` needs the worker folder importable from any cwd.
-        env.insert(
-            "PYTHONPATH".into(),
-            location.worker_dir.to_string_lossy().into_owned(),
-        );
+        env.insert("PYTHONPATH".into(), plain_path(&location.worker_dir));
         args.extend(["-m".to_string(), "app.main".to_string()]);
     }
     args.push("mcp".into());
     McpLaunch {
-        command: location.python.clone(),
+        command: PathBuf::from(plain_path(&location.python)),
         args,
-        cwd: location.worker_dir.clone(),
+        cwd: PathBuf::from(plain_path(&location.worker_dir)),
         env,
         bundled: location.bundled,
     }
@@ -533,6 +547,24 @@ mod tests {
             assert!(out.ends_with("output"), "{out}");
         }
         assert!(!launch.env.contains_key("PYTHONPATH"));
+    }
+
+    #[test]
+    fn plain_path_strips_verbatim_prefix() {
+        assert_eq!(
+            plain_path(Path::new(r"\\?\D:\LocalSub NPU\worker\localsub-worker.exe")),
+            r"D:\LocalSub NPU\worker\localsub-worker.exe"
+        );
+        assert_eq!(
+            plain_path(Path::new(r"\\?\UNC\nas\share\w.exe")),
+            r"\\nas\share\w.exe"
+        );
+        assert_eq!(plain_path(Path::new(r"C:\x\y")), r"C:\x\y");
+        assert_eq!(
+            plain_path(Path::new(r"\\?\Volume{1}\x")),
+            r"\\?\Volume{1}\x"
+        );
+        assert_eq!(plain_path(Path::new("python")), "python");
     }
 
     #[test]

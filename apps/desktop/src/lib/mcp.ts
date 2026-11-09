@@ -77,15 +77,16 @@ export function psQuote(value: string): string {
 
 /**
  * `claude mcp add` for Claude Code, user scope so it works from any folder (including a clone
- * of the repo when asking Claude Code to fix what the analysis found). Options go before the
- * server name, the server command after `--`.
+ * of the repo when asking Claude Code to fix what the analysis found). The server name comes
+ * first: `-e/--env` takes several values, so a name placed after it is read as another
+ * variable ("Invalid environment variable format: localsub-npu"). `--` ends the options and
+ * starts the server command.
  */
 export function claudeCodeCommand(launch: McpLaunch): string {
-  const env = Object.entries(launch.env).flatMap(([k, v]) => ["--env", psQuote(`${k}=${v}`)]);
+  const env = Object.entries(launch.env).flatMap(([k, v]) => ["-e", psQuote(`${k}=${v}`)]);
   return [
-    "claude mcp add --transport stdio --scope user",
+    `claude mcp add ${MCP_SERVER_NAME} --transport stdio --scope user`,
     ...env,
-    MCP_SERVER_NAME,
     "--",
     psQuote(launch.command),
     ...launch.args.map(psQuote),
