@@ -57,3 +57,11 @@ Expected: OpenVINO compiles the model for the NPU on first use. Later runs reuse
 - Set `--language vi` explicitly for Vietnamese audio instead of auto-detection.
 - Use a larger model (`whisper-medium-int8` or `whisper-large-v3-turbo-int8`) for Vietnamese.
 - Repeated phrases on long silence are a known Whisper hallucination pattern; trim silence or use a larger model.
+
+## Installer: "Error opening file for writing ... worker\_internal\VCRUNTIME140.dll"
+
+A `localsub-worker.exe` from the install folder is still running, usually started as an MCP
+server by Claude Desktop, Claude Code, VS Code or Perplexity, so its DLLs are locked. Installers
+built with `windows/hooks.nsh` stop those processes before copying files. With an older
+installer, do not press Ignore: quit the AI app (Claude Desktop: system tray → Quit) or run
+`Get-Process localsub-worker | Stop-Process -Force` in PowerShell, then press Retry.
