@@ -368,6 +368,16 @@ def _generate_many(pipeline: Any, prompts: Sequence[str], max_new_tokens: int) -
 
 _PLACEHOLDER = re.compile(r"^(?:N\s*[.)]\s*)?(?:text|translation)?\s*[.]?$", re.IGNORECASE)
 _LOOP = re.compile(r"(\S{1,12}?)(?:\s*\1){5,}")
+# A run of one punctuation mark ("......", "!!!!!!") or one letter ("Ahhhhhh") is how
+# subtitles render "……", stacked "！？" and drawn-out sounds; it is collapsed before the
+# loop check so only repeated words and numbers ("1. 1. 1.", "no no no ...") count.
+_RUN = re.compile(r"([^\w\s]|[^\W\d_])\1+")
+
+
+def _loops(text: str, source: str) -> bool:
+    """A word or number repeated 6+ times that the source line does not repeat itself
+    (a laugh or a stammer translated faithfully is not a degenerate loop)."""
+    return bool(_LOOP.search(_RUN.sub(r"\1", text))) and not _LOOP.search(source)
 
 
 FALLBACK_REASONS = ("missing", "placeholder", "loop", "no_letters", "too_long")
@@ -384,7 +394,7 @@ def rejection_reason(value: str | None, source: str) -> str | None:
         return "missing"
     if _PLACEHOLDER.match(text) or text.upper().startswith("N. "):
         return "placeholder"
-    if _LOOP.search(text):  # "1. 1. 1. 1. ..." or a word repeated 6+ times
+    if _loops(text, source):  # "1. 1. 1. 1. ..." or a word repeated 6+ times
         return "loop"
     letters = sum(ch.isalpha() for ch in text)
     if letters == 0 and any(ch.isalpha() for ch in source):

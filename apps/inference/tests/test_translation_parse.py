@@ -179,3 +179,37 @@ def test_analysis_and_compare_show_fallback_reasons(tmp_path) -> None:
         "a": {"missing": 25, "loop": 5},
         "b": {"missing": 2},
     }
+
+
+# Japanese subtitles are full of "……", drawn-out sounds and stacked "！？". A translation
+# that mirrors them is faithful, not a degenerate loop; job f5031d864459 kept 1251 of
+# 3270 lines in Japanese because such lines were counted as "loop".
+@pytest.mark.parametrize(
+    ("value", "source"),
+    [
+        ("......", "……"),
+        ("Wait......", "待って……"),
+        ("Hmm...... I see.", "うーん……なるほど"),
+        ("What?!!!!!!", "何？！"),
+        ("Ahhhhhhh!", "あああああ！"),
+        ("Nooooooooo!", "いやあああ！"),
+        ("Ah, ah, ah, ah, ah, ah!", "あ、あ、あ、あ、あ、あ！"),
+        ("Ha ha ha ha ha ha ha", "はははははははは"),
+    ],
+)
+def test_expressive_repetition_is_not_a_loop(value: str, source: str) -> None:
+    assert translation.rejection_reason(value, source) is None
+    assert translation.plausible(value, source) == value
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "1. 1. 1. 1. 1. 1. 1. 1.",
+        "rất rất rất rất rất rất rất",
+        "sorry...... sorry...... sorry...... sorry...... sorry...... sorry......",
+        "no no no no no no no",
+    ],
+)
+def test_real_loops_are_still_rejected(value: str) -> None:
+    assert translation.rejection_reason(value, "ごめん……") == "loop"

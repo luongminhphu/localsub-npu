@@ -8,7 +8,7 @@
 - Sửa phụ đề trực tiếp trong bảng, xuất **SRT, VTT, TXT** và file dự án `.localsub.json`.
 - Media không bao giờ rời khỏi máy. Sau khi tải model lần đầu, không cần Internet và không cần API key.
 
-> Phiên bản hiện tại: **0.13.0 (tối ưu MCP cho Claude: Claude Desktop ghi cấu hình một nút, Claude Code, connector Claude web/di động, kết quả tool gọn hơn ~45%) · 0.12.0 (kết nối Perplexity qua MCP: server HTTP chỉ đọc có khóa API + đường hầm HTTPS) · 0.11.0 (tab Phân tích (AI) và MCP server chỉ đọc để trợ lý AI phân tích hiệu suất, log) · 0.10.0 (thêm tiếng Hàn: nhận dạng và dịch Hàn → Việt/Anh) · 0.9.2 (trả runtime OpenVINO về 2026.4.0 như 0.8.0, tắt mặc định ép tốc độ tối đa EcoQoS) · 0.9.1 (tự phục hồi khi driver NPU bị reset giữa chừng) · 0.9.0 (Wave 7: giữ máy thức và chạy tốc độ tối đa khi xử lý, danh mục model dùng chung, thêm Qwen3.5 và Distil-Whisper)**. Có **bộ cài Windows** (không cần Python/Node/Rust) — xem
+> Phiên bản hiện tại: **0.13.1 (dịch tiếng Nhật: không còn coi "……", "！？" và tiếng kéo dài là vòng lặp) · 0.13.0 (tối ưu MCP cho Claude: Claude Desktop ghi cấu hình một nút, Claude Code, connector Claude web/di động, kết quả tool gọn hơn ~45%) · 0.12.0 (kết nối Perplexity qua MCP: server HTTP chỉ đọc có khóa API + đường hầm HTTPS) · 0.11.0 (tab Phân tích (AI) và MCP server chỉ đọc để trợ lý AI phân tích hiệu suất, log) · 0.10.0 (thêm tiếng Hàn: nhận dạng và dịch Hàn → Việt/Anh) · 0.9.2 (trả runtime OpenVINO về 2026.4.0 như 0.8.0, tắt mặc định ép tốc độ tối đa EcoQoS) · 0.9.1 (tự phục hồi khi driver NPU bị reset giữa chừng) · 0.9.0 (Wave 7: giữ máy thức và chạy tốc độ tối đa khi xử lý, danh mục model dùng chung, thêm Qwen3.5 và Distil-Whisper)**. Có **bộ cài Windows** (không cần Python/Node/Rust) — xem
 > [Cài nhanh bằng bộ cài](#cài-nhanh-bằng-bộ-cài). Muốn phát triển hoặc chạy dòng lệnh thì cài từ mã nguồn (mục 2–6).
 
 ## Cài nhanh bằng bộ cài
@@ -651,6 +651,14 @@ App **không chạy chồng** (tự quay về tuần tự và ghi lý do vào `o
 
 Lưu ý: GPU và NPU vẫn dùng chung băng thông RAM. Whisper small nhỏ (~250 MB) và chủ yếu tốn tính toán nên ít tranh với LLM hơn nhiều so với việc hai bản LLM cùng dịch, nhưng tốc độ mỗi bước khi chạy chồng có thể chậm đi một chút.
 
+### Không coi "……" và tiếng kéo dài là vòng lặp (0.13.1)
+
+Phân tích hiệu suất ngày 09/11/2026 (50 job gần nhất): 16 job tiếng Nhật giữ nguyên hơn 10% số câu, và ở các job có `translation_fallback_reasons` thì lý do gần như luôn là `loop` (job `f5031d864459`: 1251/1260 câu bị bỏ, tức 38% của 3270 câu, Qwen3.5 4B; job `c4ebb0b5a4c5`: 293/320, Qwen3 8B).
+
+- **Nguyên nhân (tái hiện bằng test):** bộ phát hiện lặp coi bất kỳ ký tự nào lặp 6 lần là vòng lặp, nên bản dịch đúng như `Wait......` (từ `待って……`), `What?!!!!!!`, `Ahhhhhhh!` bị loại, dịch lại từng câu, rồi vẫn bị loại và trả về tiếng Nhật — mỗi câu còn tốn thêm một lượt gọi LLM.
+- **Cách sửa:** trước khi kiểm tra, chuỗi cùng một dấu câu hoặc cùng một chữ cái được gộp lại; chỉ từ hoặc số lặp từ 6 lần (`1. 1. 1. ...`, `no no no ...`) mới tính là vòng lặp. Nếu chính câu gốc đã lặp (ví dụ `はははははは`) thì bản dịch lặp theo được giữ.
+- **Kiểm chứng:** cần chạy lại một video tiếng Nhật và xem `translation_fallback_reasons.loop` trong `localsub_get_job`; chưa có job mới nên chưa xác nhận trên dữ liệu thật.
+
 ### Bớt dòng giữ nguyên tiếng gốc (0.12.2)
 
 Phân tích hiệu suất ngày 28/10/2026 (50 job gần nhất) cho thấy 30 job tiếng Nhật còn hơn 10% số câu giữ nguyên tiếng gốc (ví dụ 899/2890 câu ≈ 31%), kể cả sau khi đã dịch lại từng câu. Mỗi câu như vậy còn tốn thêm một lượt gọi LLM.
@@ -855,7 +863,8 @@ CI (GitHub Actions) chạy Python lint/test, frontend lint/type-check/test/build
 12. 0.11.0: tab Phân tích (AI) và MCP server chỉ đọc (log, chẩn đoán, phân tích hiệu suất, kế hoạch tối ưu cho AI lập trình). ✅
 13. 0.12.0: kết nối Perplexity — MCP qua Streamable HTTP (khóa API, kiểm tra Origin, giới hạn tần suất, nhật ký truy cập) và đường hầm HTTPS Cloudflare ngay trong app. ✅
 14. 0.13.0: tối ưu MCP cho Claude — Claude Desktop ghi cấu hình bằng một nút (có sao lưu), lệnh Claude Code + quyền chạy tool không cần hỏi, connector Claude web/di động (khóa trong URL), kết quả tool gọn hơn và mô tả tool rõ hơn. ✅
-15. Tiếp theo (backlog): MCP giai đoạn 2 (chạy benchmark/đổi cấu hình có xác nhận), đường hầm có tên để URL cố định, OAuth cho connector, tăng tốc nạp model, đo tốc độ Qwen3.5 trên GPU Arc, chẩn đoán rõ lỗi driver NPU, preset tốc độ/chất lượng, benchmark thiết bị ngay trong app, ký số bộ cài, kèm FFmpeg trong bộ cài, tự cập nhật.
+15. 0.13.1: bản dịch giữ "......", "!!!!" hay "Ahhhh" không còn bị coi là vòng lặp và bị trả về tiếng gốc. ✅
+16. Tiếp theo (backlog): MCP giai đoạn 2 (chạy benchmark/đổi cấu hình có xác nhận), đường hầm có tên để URL cố định, OAuth cho connector, tăng tốc nạp model, đo tốc độ Qwen3.5 trên GPU Arc, chẩn đoán rõ lỗi driver NPU, preset tốc độ/chất lượng, benchmark thiết bị ngay trong app, ký số bộ cài, kèm FFmpeg trong bộ cài, tự cập nhật.
 
 ## Giấy phép
 
