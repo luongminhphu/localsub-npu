@@ -104,6 +104,15 @@ def load_model(
     cache_dir: Path | None = None,
     factory: PipelineFactory = _default_factory,
 ) -> LoadedModel:
+    spec = catalog.spec(model_id)
+    if spec is not None and set(spec.devices) != set(catalog.ALL_DEVICES):
+        # e.g. INT4_ASYM builds are GPU/CPU only: never try (or silently accept) the NPU.
+        if requested != "auto" and requested not in spec.devices:
+            raise LocalSubError(
+                ErrorCode.DEVICE_UNAVAILABLE,
+                f"{spec.label} runs on {'/'.join(spec.devices)} only, not {requested}.",
+            )
+        candidates = [d for d in candidates if d in spec.devices] or list(spec.devices)
     compiled = compile_with_fallback(
         model_path, requested, candidates, available_devices, factory, cache_dir
     )

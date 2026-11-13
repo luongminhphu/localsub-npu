@@ -38,6 +38,24 @@ def test_models_list_carries_catalog_metadata(tmp_path: Path) -> None:
     assert rows["whisper-small-int8"]["languages"] is None
 
 
+def test_new_models_are_downloadable_and_gpu_cpu_only(tmp_path: Path) -> None:
+    rows = {r["id"]: r for r in model_store.list_models(tmp_path)}
+    turbo4 = rows["whisper-large-v3-turbo-int4"]
+    assert turbo4["kind"] == "asr" and turbo4["devices"] == ["GPU", "CPU"]
+    assert turbo4["experimental"] and turbo4["languages"] is None
+    assert whisper.MODEL_CATALOG["whisper-large-v3-turbo-int4"] == (
+        "OpenVINO/whisper-large-v3-turbo-int4-ov"
+    )
+    q14 = rows["qwen3-14b-int4"]
+    assert q14["kind"] == "translation" and q14["runtime"] == "llm"
+    assert q14["devices"] == ["GPU", "CPU"] and q14["experimental"]
+    assert translation.TRANSLATION_CATALOG["qwen3-14b-int4"] == "OpenVINO/Qwen3-14B-int4-ov"
+    assert "openvino_model.xml" in translation.required_files("qwen3-14b-int4")
+    with pytest.raises(LocalSubError) as err:
+        translation.devices_for("qwen3-14b-int4", "NPU")
+    assert err.value.code == ErrorCode.DEVICE_UNAVAILABLE
+
+
 def test_vlm_models_need_language_model_files() -> None:
     assert "openvino_language_model.xml" in translation.required_files("qwen3.5-9b-int4")
     assert "openvino_model.xml" in translation.required_files("qwen3-8b-int4-cw")

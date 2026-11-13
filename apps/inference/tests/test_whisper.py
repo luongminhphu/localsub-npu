@@ -53,6 +53,37 @@ def test_explicit_device_missing(tmp_path: Path) -> None:
     assert err.value.code == ErrorCode.DEVICE_UNAVAILABLE
 
 
+def test_auto_skips_devices_the_model_cannot_use(tmp_path: Path) -> None:
+    """whisper-large-v3-turbo-int4 is GPU/CPU only: auto must not try the NPU first."""
+    f = factory_failing_on()
+    loaded = whisper.load_model(
+        tmp_path, "whisper-large-v3-turbo-int4", "auto", ["NPU", "GPU", "CPU"],
+        ("CPU", "GPU", "NPU"), factory=f,
+    )
+    assert f.calls == ["GPU"]
+    assert loaded.device.resolved == "GPU"
+
+
+def test_explicit_device_the_model_cannot_use(tmp_path: Path) -> None:
+    f = factory_failing_on()
+    with pytest.raises(LocalSubError) as err:
+        whisper.load_model(
+            tmp_path, "whisper-large-v3-turbo-int4", "NPU", ["NPU"], ("CPU", "NPU"), factory=f
+        )
+    assert err.value.code == ErrorCode.DEVICE_UNAVAILABLE
+    assert "GPU/CPU" in err.value.message
+    assert f.calls == []
+
+
+def test_all_device_models_keep_the_npu(tmp_path: Path) -> None:
+    f = factory_failing_on()
+    loaded = whisper.load_model(
+        tmp_path, "whisper-small-int8", "auto", ["NPU", "GPU", "CPU"], ("CPU", "GPU", "NPU"),
+        factory=f,
+    )
+    assert loaded.device.resolved == "NPU"
+
+
 def test_model_missing_message_has_download_hint(tmp_path: Path) -> None:
     with pytest.raises(LocalSubError) as err:
         whisper.ensure_model_present(tmp_path / "nope", "whisper-small-int8")

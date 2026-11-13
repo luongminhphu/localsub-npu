@@ -11,6 +11,7 @@ Intel publishes pre-converted OpenVINO IR models, so no PyTorch/Optimum export i
 | `whisper-small-int8` | `OpenVINO/whisper-small-int8-ov` | **Default**; first NPU target |
 | `whisper-medium-int8` | `OpenVINO/whisper-medium-int8-ov` | Better Vietnamese, slower |
 | `whisper-large-v3-turbo-int8` | `OpenVINO/whisper-large-v3-turbo-int8-ov` | Best quality/speed balance for Vietnamese; try GPU and NPU |
+| `whisper-large-v3-turbo-int4` | `OpenVINO/whisper-large-v3-turbo-int4-ov` | Experimental (0.14.0): INT4_ASYM weights, smaller than INT8; GPU/CPU only (the worker never tries the NPU for it); needs OpenVINO 2026.1+ |
 | `whisper-large-v3-int8` | `OpenVINO/whisper-large-v3-int8-ov` | Highest quality, slowest |
 
 ```powershell
@@ -39,6 +40,7 @@ data/
 | Model id | Hugging Face repo | Size | Notes |
 |---|---|---|---|
 | `qwen3-8b-int4-cw` | `OpenVINO/Qwen3-8B-int4-cw-ov` | ~5 GB | **Default**; channel-wise INT4 recommended for Intel NPU |
+| `qwen3-14b-int4` | `OpenVINO/Qwen3-14B-int4-ov` | ~8.3 GB | Experimental (0.14.0): larger than Qwen3 8B, slower; GPU/CPU only; 32 GB RAM advised |
 | `qwen2.5-7b-instruct-int4` | `OpenVINO/Qwen2.5-7B-Instruct-int4-ov` | ~4.5 GB | Good EN↔VI; best on the Arc GPU |
 | `qwen3-4b-int4` | `OpenVINO/Qwen3-4B-int4-ov` | ~2.5 GB | Balanced |
 | `qwen2.5-1.5b-instruct-int4` | `OpenVINO/Qwen2.5-1.5B-Instruct-int4-ov` | ~1 GB | Fast drafts, needs review |

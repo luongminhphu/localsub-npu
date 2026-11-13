@@ -8,7 +8,7 @@
 - Sửa phụ đề trực tiếp trong bảng, xuất **SRT, VTT, TXT** và file dự án `.localsub.json`.
 - Media không bao giờ rời khỏi máy. Sau khi tải model lần đầu, không cần Internet và không cần API key.
 
-> Phiên bản hiện tại: **0.13.1 (dịch tiếng Nhật: không còn coi "……", "！？" và tiếng kéo dài là vòng lặp) · 0.13.0 (tối ưu MCP cho Claude: Claude Desktop ghi cấu hình một nút, Claude Code, connector Claude web/di động, kết quả tool gọn hơn ~45%) · 0.12.0 (kết nối Perplexity qua MCP: server HTTP chỉ đọc có khóa API + đường hầm HTTPS) · 0.11.0 (tab Phân tích (AI) và MCP server chỉ đọc để trợ lý AI phân tích hiệu suất, log) · 0.10.0 (thêm tiếng Hàn: nhận dạng và dịch Hàn → Việt/Anh) · 0.9.2 (trả runtime OpenVINO về 2026.4.0 như 0.8.0, tắt mặc định ép tốc độ tối đa EcoQoS) · 0.9.1 (tự phục hồi khi driver NPU bị reset giữa chừng) · 0.9.0 (Wave 7: giữ máy thức và chạy tốc độ tối đa khi xử lý, danh mục model dùng chung, thêm Qwen3.5 và Distil-Whisper)**. Có **bộ cài Windows** (không cần Python/Node/Rust) — xem
+> Phiên bản hiện tại: **0.14.0 (thêm model Whisper large-v3 turbo INT4 và Qwen3 14B, thử nghiệm, GPU/CPU) · 0.13.1 (dịch tiếng Nhật: không còn coi "……", "！？" và tiếng kéo dài là vòng lặp) · 0.13.0 (tối ưu MCP cho Claude: Claude Desktop ghi cấu hình một nút, Claude Code, connector Claude web/di động, kết quả tool gọn hơn ~45%) · 0.12.0 (kết nối Perplexity qua MCP: server HTTP chỉ đọc có khóa API + đường hầm HTTPS) · 0.11.0 (tab Phân tích (AI) và MCP server chỉ đọc để trợ lý AI phân tích hiệu suất, log) · 0.10.0 (thêm tiếng Hàn: nhận dạng và dịch Hàn → Việt/Anh) · 0.9.2 (trả runtime OpenVINO về 2026.4.0 như 0.8.0, tắt mặc định ép tốc độ tối đa EcoQoS) · 0.9.1 (tự phục hồi khi driver NPU bị reset giữa chừng) · 0.9.0 (Wave 7: giữ máy thức và chạy tốc độ tối đa khi xử lý, danh mục model dùng chung, thêm Qwen3.5 và Distil-Whisper)**. Có **bộ cài Windows** (không cần Python/Node/Rust) — xem
 > [Cài nhanh bằng bộ cài](#cài-nhanh-bằng-bộ-cài). Muốn phát triển hoặc chạy dòng lệnh thì cài từ mã nguồn (mục 2–6).
 
 ## Cài nhanh bằng bộ cài
@@ -563,6 +563,7 @@ số câu dịch lỗi (`translation_fallback_lines`) và mã lỗi — **không
 | `whisper-small-int8` | **Mặc định**, cân bằng, chạy tốt trên NPU |
 | `whisper-medium-int8` | Tiếng Việt tốt hơn, chậm hơn |
 | `whisper-large-v3-turbo-int8` | Chất lượng/tốc độ tốt nhất cho tiếng Việt và **tiếng Nhật**; thử cả GPU và NPU |
+| `whisper-large-v3-turbo-int4` (0.14.0, thử nghiệm) | Bản turbo nén INT4, nhẹ hơn bản INT8. **Chỉ GPU/CPU** (nén INT4 bất đối xứng, không dành cho NPU). Chạy thử một video và so chất lượng với bản INT8 trước khi dùng thay |
 | `whisper-large-v3-int8` | Chất lượng cao nhất, chậm nhất |
 | `distil-whisper-large-v3-int8` (0.9.0, thử nghiệm) | **Chỉ tiếng Anh**: gần bằng large-v3, decoder 2 lớp nên nhanh hơn nhiều. Phải chọn ngôn ngữ nói = Tiếng Anh; app chặn khi chọn Tự nhận diện, tiếng Nhật hoặc tiếng Việt |
 
@@ -571,6 +572,7 @@ số câu dịch lỗi (`translation_fallback_lines`) và mã lỗi — **không
 | Model | Dung lượng | Dùng khi |
 |---|---|---|
 | `qwen3-8b-int4-cw` | ~5 GB | **Mặc định**, định dạng INT4 channel-wise tối ưu cho NPU |
+| `qwen3-14b-int4` (0.14.0, thử nghiệm) | ~8.3 GB | Lớn hơn Qwen3 8B: có thể dịch tốt hơn nhưng chậm hơn. **Chỉ GPU/CPU**, nên có RAM 32 GB. Chưa đo trên máy thật |
 | `qwen2.5-7b-instruct-int4` | ~4.5 GB | Dịch Anh–Việt tốt, nhanh trên GPU Arc |
 | `qwen3-4b-int4` | ~2.5 GB | Máy ít RAM |
 | `qwen2.5-1.5b-instruct-int4` | ~1 GB | Bản nháp nhanh, cần soát kỹ |
