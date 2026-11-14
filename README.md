@@ -8,7 +8,7 @@
 - Sửa phụ đề trực tiếp trong bảng, xuất **SRT, VTT, TXT** và file dự án `.localsub.json`.
 - Media không bao giờ rời khỏi máy. Sau khi tải model lần đầu, không cần Internet và không cần API key.
 
-> Phiên bản hiện tại: **0.14.0 (thêm model Whisper large-v3 turbo INT4 và Qwen3 14B, thử nghiệm, GPU/CPU) · 0.13.1 (dịch tiếng Nhật: không còn coi "……", "！？" và tiếng kéo dài là vòng lặp) · 0.13.0 (tối ưu MCP cho Claude: Claude Desktop ghi cấu hình một nút, Claude Code, connector Claude web/di động, kết quả tool gọn hơn ~45%) · 0.12.0 (kết nối Perplexity qua MCP: server HTTP chỉ đọc có khóa API + đường hầm HTTPS) · 0.11.0 (tab Phân tích (AI) và MCP server chỉ đọc để trợ lý AI phân tích hiệu suất, log) · 0.10.0 (thêm tiếng Hàn: nhận dạng và dịch Hàn → Việt/Anh) · 0.9.2 (trả runtime OpenVINO về 2026.4.0 như 0.8.0, tắt mặc định ép tốc độ tối đa EcoQoS) · 0.9.1 (tự phục hồi khi driver NPU bị reset giữa chừng) · 0.9.0 (Wave 7: giữ máy thức và chạy tốc độ tối đa khi xử lý, danh mục model dùng chung, thêm Qwen3.5 và Distil-Whisper)**. Có **bộ cài Windows** (không cần Python/Node/Rust) — xem
+> Phiên bản hiện tại: **0.14.1 (GPU hết tài nguyên khi dịch: giữ phần đã dịch và dịch tiếp trên CPU thay vì dừng job) · 0.14.0 (thêm model Whisper large-v3 turbo INT4 và Qwen3 14B, thử nghiệm, GPU/CPU) · 0.13.1 (dịch tiếng Nhật: không còn coi "……", "！？" và tiếng kéo dài là vòng lặp) · 0.13.0 (tối ưu MCP cho Claude: Claude Desktop ghi cấu hình một nút, Claude Code, connector Claude web/di động, kết quả tool gọn hơn ~45%) · 0.12.0 (kết nối Perplexity qua MCP: server HTTP chỉ đọc có khóa API + đường hầm HTTPS) · 0.11.0 (tab Phân tích (AI) và MCP server chỉ đọc để trợ lý AI phân tích hiệu suất, log) · 0.10.0 (thêm tiếng Hàn: nhận dạng và dịch Hàn → Việt/Anh) · 0.9.2 (trả runtime OpenVINO về 2026.4.0 như 0.8.0, tắt mặc định ép tốc độ tối đa EcoQoS) · 0.9.1 (tự phục hồi khi driver NPU bị reset giữa chừng) · 0.9.0 (Wave 7: giữ máy thức và chạy tốc độ tối đa khi xử lý, danh mục model dùng chung, thêm Qwen3.5 và Distil-Whisper)**. Có **bộ cài Windows** (không cần Python/Node/Rust) — xem
 > [Cài nhanh bằng bộ cài](#cài-nhanh-bằng-bộ-cài). Muốn phát triển hoặc chạy dòng lệnh thì cài từ mã nguồn (mục 2–6).
 
 ## Cài nhanh bằng bộ cài
@@ -777,6 +777,7 @@ Cách đọc: nếu ở bước Dịch mà GPU thấp và CPU cao, model dịch 
 | `npm run tauri dev` lỗi linker `link.exe` | Cài Visual Studio Build Tools với workload C++ (mục 2) |
 | Bản dịch sai hoặc giữ nguyên câu gốc | Dùng model 7–8B; xem `translation_fallback_lines` trong nhật ký; sửa tay trong bảng |
 | Phụ đề tiếng Nhật sai chữ Hán (ví dụ 決産 thay cho 決算) | Dùng `whisper-large-v3-turbo-int8` hoặc `whisper-medium-int8`; tiny/base/small hay nhầm đồng âm |
+| `TRANSLATION_FAILED: ... [GPU] CL_OUT_OF_RESOURCES` | GPU hết tài nguyên khi dịch (hay gặp với model dịch lớn như Qwen3 14B, hoặc khi GPU đang bận việc khác); sau lỗi này driver không dùng tiếp được. Từ 0.14.1, nếu thiết bị dịch là **Tự động**, app giữ phần đã dịch và dịch tiếp trên CPU (chậm hơn; ghi ở `translation_recoveries` trong nhật ký job). Nếu chọn cố định GPU thì job vẫn dừng: chọn Tự động hoặc CPU, hoặc dùng model dịch nhỏ hơn (Qwen3 8B/4B) |
 | Thiếu RAM khi dịch | Chọn `qwen3-4b-int4`, đóng ứng dụng khác |
 | Script bị chặn | `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass` |
 
