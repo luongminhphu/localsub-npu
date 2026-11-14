@@ -67,6 +67,9 @@ class JobRecord:
     overlap_reason: str | None = None
     # NPU/GPU driver resets survived during speech recognition: at_ms, from, to, error.
     asr_recoveries: list[dict[str, Any]] = field(default_factory=list)
+    # Translation moved off a device whose driver died (e.g. GPU CL_OUT_OF_RESOURCES):
+    # at_line, from, to, ok, error.
+    translation_recoveries: list[dict[str, Any]] = field(default_factory=list)
     translation_overlap_lines: int | None = None  # lines translated by the overlapping thread
     # First subtitle line that changed after it was handed to the overlapping translator
     # (None = no change). Lines from the last whole batch before it are still reused.
@@ -189,6 +192,80 @@ def _load_translator(
 
 
 RECOVERY_DELAY_S = 2.0  # let the driver finish its reset before reloading
+
+
+def _translator_after_lost(
+    settings: Settings,
+    request: JobRequest,
+    record: JobRecord,
+    llm_path: Path,
+    available: tuple[str, ...],
+    llm_factory: translation.LLMFactory | None,
+    lost: translation.TranslatorLost,
+    at_line: int,
+) -> translation.LoadedTranslator:
+    """Load the translator on the CPU after its GPU/NPU driver died mid-run.
+
+    Only when the translation device is Auto: an explicit device never falls back. The CPU
+    shares no driver with the GPU/NPU, so it is safe to use while the broken pipeline stays
+    abandoned (see ``translation.ABANDONED_PIPELINES``)."""
+    source = lost.device or "device"
+    entry: dict[str, Any] = {"at_line": at_line, "from": source, "to": "CPU", "ok": False}
+    requested = (request.translation_device or settings.device_preference or "auto").lower()
+    reason = None
+    if requested != "auto":
+        reason = f"translation device is set to {requested.upper()}; choose Auto or CPU"
+    elif source == "CPU":
+        reason = "the CPU itself failed"
+    elif "CPU" not in {d.upper().split(".")[0] for d in available}:
+        reason = "no CPU device reported by OpenVINO"
+    if reason:
+        entry["error"] = "NOT_RECOVERED"
+        record.translation_recoveries.append(entry)
+        raise LocalSubError(
+            ErrorCode.TRANSLATION_FAILED, f"{lost.message[:300]} (not retried: {reason})"
+        ) from lost
+    llm_kwargs = {"factory": llm_factory} if llm_factory else {}
+    try:
+        cpu = translation.load_translator(
+            llm_path,
+            request.translation_model,
+            "CPU",
+            ["CPU"],
+            available,
+            cache_dir=settings.model_dir / ".ov-cache",
+            **llm_kwargs,
+        )
+    except LocalSubError as exc:
+        entry["error"] = exc.code
+        record.translation_recoveries.append(entry)
+        raise
+    entry["ok"] = True
+    record.translation_recoveries.append(entry)
+    record.translation_device = DeviceResolution(
+        requested=requested,
+        resolved="CPU",
+        available_devices=available,
+        fallback_reason=f"{source} driver failed at line {at_line + 1}; continued on CPU",
+    )
+    record.timings_ms["reload_translation_model"] = (
+        record.timings_ms.get("reload_translation_model", 0) + cpu.load_ms
+    )
+    return cpu
+
+
+def _join(a: translation.TranslationResult, b: translation.TranslationResult):
+    reasons: dict[str, int] = {}
+    for key, n in (*a.fallback_reasons, *b.fallback_reasons):
+        reasons[key] = reasons.get(key, 0) + n
+    return translation.TranslationResult(
+        (*a.lines, *b.lines),
+        a.fallback_lines + b.fallback_lines,
+        a.inference_ms + b.inference_ms,
+        parallel=b.parallel if b.parallel is not None else a.parallel,
+        tuning=(*a.tuning, *b.tuning),
+        fallback_reasons=tuple(sorted(reasons.items())),
+    )
 
 
 def _recover_asr(
@@ -325,6 +402,9 @@ class OverlapTranslation:
         self.translator: translation.LoadedTranslator | None = None
         self.result: translation.TranslationResult | None = None
         self.error: BaseException | None = None
+        # Device died mid-run: ``result`` holds the lines done before it, ``translator`` is
+        # abandoned and the main thread continues on the CPU.
+        self.lost: translation.TranslatorLost | None = None
         self.thread = threading.Thread(target=self._run, name="translate-overlap", daemon=True)
 
     def start(self) -> None:
@@ -346,6 +426,12 @@ class OverlapTranslation:
                     {"type": "progress", "stage": "translating", "done": done, "total": total}
                 ),
             )
+        except translation.TranslatorLost as exc:
+            if self.translator is not None:
+                translation.abandon(self.translator)
+            self.translator = None
+            self.lost = exc
+            self.result = exc.partial
         except BaseException as exc:  # noqa: BLE001 - re-raised on the main thread
             self.error = exc
 
@@ -670,11 +756,32 @@ def _run_job(
                 record.translation_overlap_lines = done
                 record.translation_overlap_diverged_at = overlap.diverged_at
             if done < len(texts):
+                if translator is None and overlap is not None and overlap.lost is not None:
+                    translator = _translator_after_lost(
+                        settings,
+                        request,
+                        record,
+                        llm_path,
+                        available,
+                        llm_factory,
+                        overlap.lost,
+                        done,
+                    )
                 if translator is None:
                     translator = _load_translator(
                         settings, request, record, llm_path, available, llm_factory
                     )
-                tail = _translate(translator, texts[done:], source_lang, target, send)
+                try:
+                    tail = _translate(translator, texts[done:], source_lang, target, send)
+                except translation.TranslatorLost as lost:
+                    translation.abandon(translator)
+                    translator = None
+                    at = done + len(lost.partial.lines)
+                    translator = _translator_after_lost(
+                        settings, request, record, llm_path, available, llm_factory, lost, at
+                    )
+                    rest = _translate(translator, texts[at:], source_lang, target, send)
+                    tail = _join(lost.partial, rest)
             else:
                 tail = translation.TranslationResult((), 0, 0)
             translations = [*(head.lines[:done] if head else ()), *tail.lines]

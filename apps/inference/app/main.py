@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from dataclasses import asdict
 from pathlib import Path
@@ -224,7 +225,14 @@ def _cmd_transcribe(args: argparse.Namespace, settings: Settings) -> int:
         )
     else:
         _print_json(summary)
-    return 0 if record.state == JobState.COMPLETED else 1
+    code = 0 if record.state == JobState.COMPLETED else 1
+    if translation.ABANDONED_PIPELINES:
+        # A GPU/NPU driver died during translation: freeing that pipeline (also at interpreter
+        # shutdown) would call into the broken driver and can hang, so leave without cleanup.
+        sys.stdout.flush()
+        sys.stderr.flush()
+        os._exit(code)
+    return code
 
 
 def _cmd_translate(args: argparse.Namespace, settings: Settings) -> int:

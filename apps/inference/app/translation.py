@@ -76,6 +76,49 @@ class TranslationResult:
     fallback_reasons: tuple[tuple[str, int], ...] = ()
 
 
+# Driver errors after which the device context is unusable: the Intel GPU plugin says that
+# after CL_OUT_OF_RESOURCES "any subsequent OpenCL API call will cause program to hang", so
+# retrying (even with fewer batches) or destroying the pipeline on that device is unsafe.
+DEVICE_FATAL_MARKERS: tuple[str, ...] = (
+    "CL_OUT_OF_RESOURCES",
+    "CL_MEM_OBJECT_ALLOCATION_FAILURE",
+    "CL_OUT_OF_HOST_MEMORY",
+    "ZE_RESULT_ERROR_DEVICE_LOST",
+    "DEVICE_LOST",
+)
+
+# Pipelines whose device context died. They are kept alive (never destroyed) until the
+# worker exits with os._exit, because their destructors would call into the broken driver.
+ABANDONED_PIPELINES: list[Any] = []
+
+
+def is_device_fatal(exc: BaseException | None) -> bool:
+    """True when ``exc`` (or its cause chain) is a driver error that poisons the device."""
+    seen = 0
+    while exc is not None and seen < 5:
+        text = str(exc)
+        if any(marker in text for marker in DEVICE_FATAL_MARKERS):
+            return True
+        exc = exc.__cause__ or exc.__context__
+        seen += 1
+    return False
+
+
+class TranslatorLost(LocalSubError):
+    """The translator's device died mid-run. ``partial`` holds every line translated before
+    the failing call (whole units, in order), so the caller can continue elsewhere."""
+
+    def __init__(self, device: str | None, message: str, partial: TranslationResult) -> None:
+        super().__init__(ErrorCode.TRANSLATION_FAILED, message)
+        self.device = device
+        self.partial = partial
+
+
+def abandon(translator: LoadedTranslator) -> None:
+    """Never touch this translator's pipeline again, not even to free it."""
+    ABANDONED_PIPELINES.append(translator.pipeline)
+
+
 REQUIRED_FILES: tuple[str, ...] = (
     "openvino_model.xml",
     "openvino_tokenizer.xml",
@@ -699,7 +742,22 @@ def translate_feed(
         t0 = clock()
         try:
             values, missed = engine.unit(batches)
-        except LocalSubError:
+        except LocalSubError as exc:
+            if is_device_fatal(exc):
+                busy += clock() - t0
+                raise TranslatorLost(
+                    device,
+                    f"{device or 'device'} failed while translating line {len(output) + 1}: "
+                    f"{exc.message}",
+                    TranslationResult(
+                        tuple(output),
+                        fallbacks,
+                        int(busy * 1000),
+                        parallel=size,
+                        tuning=tuple(tuner.samples),
+                        fallback_reasons=tuple(sorted(reasons.items())),
+                    ),
+                ) from exc
             if tuner.back_off(size):
                 continue  # retry the same batches with fewer per call
             raise
