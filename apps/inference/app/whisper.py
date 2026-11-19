@@ -15,7 +15,7 @@ from app.segmentation import TimedText
 # Pre-converted OpenVINO IR models published by Intel on Hugging Face (shared catalog).
 MODEL_CATALOG: dict[str, str] = {m: s.repo for m, s in catalog.of_kind("asr").items()}
 DEFAULT_MODEL = "whisper-small-int8"
-LANGUAGES = {"auto", "en", "ja", "ko", "vi"}
+LANGUAGES = {"auto", "en", "ja", "ko", "vi", "zh"}
 TASKS = {"transcribe", "translate"}
 
 PipelineFactory = Callable[[Path, str, dict[str, Any]], Any]

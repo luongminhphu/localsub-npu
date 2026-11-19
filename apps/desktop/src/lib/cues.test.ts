@@ -155,6 +155,7 @@ describe("Japanese cue limits", () => {
     expect(isCjk("Toyota の決算は好調です")).toBe(true);
     expect(isCjk("Xin chào các bạn")).toBe(false);
     expect(maxCharsFor("決算")).toBe(MAX_CUE_CHARS_CJK);
+    expect(maxCharsFor("今天的会议我们主要讨论预算，谢谢大家")).toBe(MAX_CUE_CHARS_CJK); // Chinese (Han, no kana)
     expect(maxCharsFor("Hello")).toBe(MAX_CUE_CHARS);
     expect(isHangul("오늘 회의를 시작하겠습니다")).toBe(true);
     expect(isCjk("오늘 회의를 시작하겠습니다")).toBe(false);

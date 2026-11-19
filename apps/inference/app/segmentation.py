@@ -20,17 +20,27 @@ MS_PER_CHAR_CJK = 150
 # 12 characters per second for adults.
 MAX_CUE_CHARS_KO = 36
 MS_PER_CHAR_KO = 85
+# Chinese uses the CJK limit (no spaces, 2 lines x 16 characters) but reads faster than
+# Japanese: Netflix's Simplified/Traditional Chinese guides allow 9 characters per second.
+MS_PER_CHAR_ZH = 110
 
 _CJK = re.compile(r"[\u3040-\u30ff\u31f0-\u31ff\u3400-\u4dbf\u4e00-\u9fff\uff66-\uff9f]")
 _HANGUL = re.compile(r"[\u1100-\u11ff\u3130-\u318f\uac00-\ud7a3]")
+_KANA = re.compile(r"[\u3040-\u30ff\u31f0-\u31ff\uff66-\uff9f]")
 # In Japanese, Whisper often separates sentences with a plain space instead of 。
-_BREAK_AFTER = re.compile(r"(?:[.!?;:,。、！？…」』）]|^\s)$")
+# Chinese clauses end with full-width ，；：; Chinese quotes close with ” or 」.
+_BREAK_AFTER = re.compile(r"(?:[.!?;:,。、，；：！？…」』）”]|^\s)$")
 
 
 def is_cjk(text: str) -> bool:
     """True when at least 30% of non-space characters are kana/kanji."""
     dense = text.replace(" ", "")
     return bool(dense) and len(_CJK.findall(dense)) >= 0.3 * len(dense)
+
+
+def is_chinese(text: str) -> bool:
+    """CJK text without kana: Chinese (Simplified or Traditional) rather than Japanese."""
+    return is_cjk(text) and not _KANA.search(text)
 
 
 def is_hangul(text: str) -> bool:
@@ -49,7 +59,7 @@ def max_chars_for(text: str, default: int = MAX_CUE_CHARS) -> int:
 
 def ms_per_char_for(text: str) -> int:
     if is_cjk(text):
-        return MS_PER_CHAR_CJK
+        return MS_PER_CHAR_ZH if is_chinese(text) else MS_PER_CHAR_CJK
     return MS_PER_CHAR_KO if is_hangul(text) else MS_PER_CHAR
 
 

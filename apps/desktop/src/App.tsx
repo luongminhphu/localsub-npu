@@ -1,4 +1,28 @@
-import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type ReactNode } from "react";
+import {
+  Activity,
+  AudioLines,
+  Boxes,
+  CircleCheck,
+  CircleX,
+  Circle,
+  Download,
+  FileVideo,
+  FolderOpen,
+  History,
+  Loader2,
+  Merge,
+  Monitor,
+  Moon,
+  Play,
+  RefreshCw,
+  Scissors,
+  Sparkles,
+  Square,
+  Sun,
+  Subtitles,
+  Trash2,
+} from "lucide-react";
 import { AnalysisPanel } from "./components/AnalysisPanel";
 import { HistoryPanel } from "./components/HistoryPanel";
 import { ModelManager } from "./components/ModelManager";
@@ -44,6 +68,13 @@ import { choicesFrom, deviceSupported, FALLBACK_MODELS, findChoice, languageSupp
 import { getBridge, type WorkerBridge } from "./lib/worker";
 
 const KEEP_AWAKE_KEY = "localsub.keepAwake";
+const THEME_KEY = "localsub.theme";
+type Theme = "system" | "light" | "dark";
+const THEMES: Array<{ id: Theme; icon: ReactNode }> = [
+  { id: "system", icon: <Monitor size={16} aria-hidden="true" /> },
+  { id: "light", icon: <Sun size={16} aria-hidden="true" /> },
+  { id: "dark", icon: <Moon size={16} aria-hidden="true" /> },
+];
 const DEVICES: Array<{ value: DevicePreference; label: string }> = [
   { value: "auto", label: "device.auto" },
   { value: "NPU", label: "NPU" },
@@ -53,6 +84,13 @@ const DEVICES: Array<{ value: DevicePreference; label: string }> = [
 const TRANSLATION_DEVICES: Array<{ value: TranslationDevice; label: string }> = DEVICES;
 type Tab = "editor" | "monitor" | "history" | "analysis" | "models";
 const TABS: Tab[] = ["editor", "monitor", "history", "analysis", "models"];
+const TAB_ICONS: Record<Tab, ReactNode> = {
+  editor: <Subtitles size={18} aria-hidden="true" />,
+  monitor: <Activity size={18} aria-hidden="true" />,
+  history: <History size={18} aria-hidden="true" />,
+  analysis: <Sparkles size={18} aria-hidden="true" />,
+  models: <Boxes size={18} aria-hidden="true" />,
+};
 const JA_WEAK_MODELS = new Set(["whisper-tiny-int8", "whisper-base-int8", "whisper-small-int8"]);
 const FORMATS: ExportFormat[] = ["srt", "vtt", "txt", "json"];
 const STEPS: WorkerStage[] = [
@@ -72,7 +110,8 @@ function baseName(path: string | null): string {
 }
 
 function rowsFor(text: string): number {
-  return Math.min(6, Math.max(2, Math.ceil(text.length / 24)));
+  // ~22 characters per line at the editor's minimum column width, plus one spare line.
+  return Math.min(7, Math.max(2, Math.ceil(text.length / 22) + 1));
 }
 
 function TimeField(props: { label: string; value: number; onCommit: (ms: number) => void }) {
@@ -101,6 +140,10 @@ export function App() {
   const [modelStatus, setModelStatus] = useState<Record<string, string>>({});
   const [choices, setChoices] = useState<ModelChoice[]>(FALLBACK_MODELS);
   const [keepAwake, setKeepAwake] = useState(() => safeStorage()?.getItem(KEEP_AWAKE_KEY) !== "0");
+  const [theme, setTheme] = useState<Theme>(() => {
+    const saved = safeStorage()?.getItem(THEME_KEY);
+    return saved === "light" || saved === "dark" ? saved : "system";
+  });
   const [diagAt, setDiagAt] = useState<Date | null>(null);
   const [historyKey, setHistoryKey] = useState(0);
   const [bridge, setBridge] = useState<WorkerBridge | null>(null);
@@ -129,6 +172,13 @@ export function App() {
   useEffect(() => {
     safeStorage()?.setItem(KEEP_AWAKE_KEY, keepAwake ? "1" : "0");
   }, [keepAwake]);
+
+  useEffect(() => {
+    const root = document.documentElement;
+    if (theme === "system") root.removeAttribute("data-theme");
+    else root.setAttribute("data-theme", theme);
+    safeStorage()?.setItem(THEME_KEY, theme);
+  }, [theme]);
 
   useEffect(() => {
     document.documentElement.lang = locale;
@@ -294,191 +344,170 @@ export function App() {
         ? t("config.incomplete")
         : t("config.notInstalled");
 
-  return (
-    <I18nContext.Provider value={i18n}>
-    <main className="app-shell">
-      <header className="header">
-        <div className="brand">
-          <h1>LocalSub NPU</h1>
-          <p className="subtitle" title={t("app.eyebrow")}>{t("app.subtitle")}</p>
-        </div>
-        <div className="header-side">
-          <div className="lang-toggle" role="group" aria-label={t("app.language")}>
-            {(["vi", "en"] as Locale[]).map((l) => (
-              <button key={l} type="button" className={locale === l ? "on" : ""} aria-pressed={locale === l} onClick={() => setLocale(l)}>
-                {l.toUpperCase()}
-              </button>
-            ))}
-          </div>
-          <span className={`status-chip${bridge?.preview ? " preview" : ""}`}>
-            {bridge?.preview ? t("app.chipPreview") : t("app.chipDesktop")}
-          </span>
-        </div>
-      </header>
+  const stepIcon = (state: string) =>
+    state === "done" ? <CircleCheck size={14} aria-hidden="true" />
+    : state === "failed" ? <CircleX size={14} aria-hidden="true" />
+    : state === "active" ? <Loader2 size={14} className="spin" aria-hidden="true" />
+    : <Circle size={14} aria-hidden="true" />;
+  const canStart = Boolean(source && bridge) && formats.length > 0 && missingModels.length === 0 && asrLanguageOk && asrDeviceOk && llmDeviceOk;
 
-      <div className="workspace">
-      <aside className="sidebar" aria-label={t("job.generate")}>
-        <article className="panel">
-          <h2>{t("media.title")}</h2>
-          <button type="button" className="drop-zone" onClick={async () => setSource((await bridge?.pickMedia()) ?? source)} disabled={!bridge || running}>
-            <span className="drop-title">{source ? baseName(source) : t("media.choose")}</span>
-            <span className="drop-hint">{t("media.hint")}</span>
-          </button>
-          {source && <p className="path" title={source}>{source}</p>}
-          <button type="button" className="secondary full" onClick={openProject} disabled={!bridge || running}>
-            {t("media.openProject")}
-          </button>
-        </article>
+  const moveTab = (from: Tab, key: string) => {
+    const delta = key === "ArrowDown" || key === "ArrowRight" ? 1 : key === "ArrowUp" || key === "ArrowLeft" ? -1 : 0;
+    const next = key === "Home" ? TABS[0] : key === "End" ? TABS[TABS.length - 1] : delta ? TABS[(TABS.indexOf(from) + delta + TABS.length) % TABS.length] : null;
+    if (!next) return false;
+    setTab(next);
+    document.getElementById(`tab-${next}`)?.focus();
+    return true;
+  };
 
-        <article className="panel">
-          <h2>{t("config.title")}</h2>
-          <div className="field-row">
-            <div className="field-group">
-              <label htmlFor="language">{t("config.spoken")}</label>
-              <select id="language" value={language} onChange={(e) => setLanguage(e.target.value as SpokenLanguage)}>
-                <option value="auto">{t("config.auto")}</option>
-                <option value="en">{t("lang.en")}</option>
-                <option value="ja">{t("lang.ja")}</option>
-                <option value="ko">{t("lang.ko")}</option>
-                <option value="vi">{t("lang.vi")}</option>
-              </select>
-            </div>
-            <div className="field-group">
-              <label htmlFor="translate-to">{t("config.translateTo")}</label>
-              <select id="translate-to" value={translateTo} onChange={(e) => setTranslateTo(e.target.value as TargetLanguage)}>
-                <option value="">{t("config.noTranslation")}</option>
-                <option value="vi">{t("lang.vi")}</option>
-                <option value="en">{t("lang.en")}</option>
-              </select>
-            </div>
+  const setup = (
+    <aside className="setup" aria-label={t("job.generate")}>
+      <section className="card">
+        <h2 className="card-title"><span className="step-no" aria-hidden="true">1</span>{t("media.title")}</h2>
+        <button type="button" className="drop-zone" onClick={async () => setSource((await bridge?.pickMedia()) ?? source)} disabled={!bridge || running}>
+          <FileVideo size={22} aria-hidden="true" />
+          <span className="drop-title">{source ? baseName(source) : t("media.choose")}</span>
+          <span className="drop-hint">{t("media.hint")}</span>
+        </button>
+        {source && <p className="path" title={source}>{source}</p>}
+        <button type="button" className="btn btn-secondary btn-block" onClick={openProject} disabled={!bridge || running}>
+          <FolderOpen size={16} aria-hidden="true" />
+          {t("media.openProject")}
+        </button>
+      </section>
+
+      <section className="card">
+        <h2 className="card-title"><span className="step-no" aria-hidden="true">2</span>{t("config.title")}</h2>
+        <div className="field-row">
+          <div className="field">
+            <label htmlFor="language">{t("config.spoken")}</label>
+            <select id="language" value={language} onChange={(e) => setLanguage(e.target.value as SpokenLanguage)}>
+              <option value="auto">{t("config.auto")}</option>
+              <option value="en">{t("lang.en")}</option>
+              <option value="ja">{t("lang.ja")}</option>
+              <option value="ko">{t("lang.ko")}</option>
+              <option value="zh">{t("lang.zh")}</option>
+              <option value="vi">{t("lang.vi")}</option>
+            </select>
           </div>
-          <div className="field-group">
-            <label htmlFor="model">{t("config.speechModel")}</label>
+          <div className="field">
+            <label htmlFor="translate-to">{t("config.translateTo")}</label>
+            <select id="translate-to" value={translateTo} onChange={(e) => setTranslateTo(e.target.value as TargetLanguage)}>
+              <option value="">{t("config.noTranslation")}</option>
+              <option value="vi">{t("lang.vi")}</option>
+              <option value="en">{t("lang.en")}</option>
+            </select>
+          </div>
+        </div>
+        <div className="field">
+          <label htmlFor="model">{t("config.speechModel")}</label>
+          <div className="field-row tight">
+            <select id="model" value={model} onChange={(e) => setModel(e.target.value)}>
+              {whisperChoices.map((m) => (
+                <option key={m.id} value={m.id}>{optionLabel(m)}</option>
+              ))}
+            </select>
+            <select aria-label={t("config.speechDevice")} value={device} onChange={(e) => setDevice(e.target.value as DevicePreference)}>
+              {DEVICES.map((d) => (
+                <option key={d.value} value={d.value} disabled={!deviceSupported(asrChoice, d.value)}>{deviceLabel(t, d.label)}</option>
+              ))}
+            </select>
+          </div>
+          <p className="hint">{hintFor(asrChoice, model)} {t("config.autoOrder")}</p>
+          {!asrLanguageOk && (
+            <p className="msg msg-error" role="alert">{t("config.languageOnly", { model: asrChoice?.label ?? model, langs: (asrChoice?.languages ?? []).map((l) => t(`lang.${l}` as MessageKey)).join(", ") })}</p>
+          )}
+          {!asrDeviceOk && <p className="msg msg-error" role="alert">{t("config.deviceOnly", { model: asrChoice?.label ?? model, devices: asrChoice?.devices.join("/") ?? "" })}</p>}
+          {language === "ja" && JA_WEAK_MODELS.has(model) && <p className="msg msg-warn">{t("config.jaWarn")}</p>}
+          {language === "ko" && JA_WEAK_MODELS.has(model) && <p className="msg msg-warn">{t("config.koWarn")}</p>}
+          {language === "zh" && JA_WEAK_MODELS.has(model) && <p className="msg msg-warn">{t("config.zhWarn")}</p>}
+        </div>
+        {translateTo && (
+          <div className="field">
+            <label htmlFor="llm">{t("config.translationModel")}</label>
             <div className="field-row tight">
-              <select id="model" value={model} onChange={(e) => setModel(e.target.value)}>
-                {whisperChoices.map((m) => (
+              <select id="llm" value={translationModel} onChange={(e) => setTranslationModel(e.target.value)}>
+                {llmChoices.map((m) => (
                   <option key={m.id} value={m.id}>{optionLabel(m)}</option>
                 ))}
               </select>
-              <select aria-label={t("config.speechDevice")} value={device} onChange={(e) => setDevice(e.target.value as DevicePreference)}>
-                {DEVICES.map((d) => (
-                  <option key={d.value} value={d.value} disabled={!deviceSupported(asrChoice, d.value)}>{deviceLabel(t, d.label)}</option>
+              <select aria-label={t("config.translationDevice")} value={translationDevice} onChange={(e) => setTranslationDevice(e.target.value as TranslationDevice)}>
+                {TRANSLATION_DEVICES.map((d) => (
+                  <option key={d.value} value={d.value} disabled={!deviceSupported(llmChoice, d.value)}>{deviceLabel(t, d.label)}</option>
                 ))}
               </select>
             </div>
-            <p className="help-text">{hintFor(asrChoice, model)} {t("config.autoOrder")}</p>
-            {!asrLanguageOk && (
-              <p className="error" role="alert">{t("config.languageOnly", { model: asrChoice?.label ?? model, langs: (asrChoice?.languages ?? []).map((l) => t(`lang.${l}` as MessageKey)).join(", ") })}</p>
-            )}
-            {!asrDeviceOk && <p className="error" role="alert">{t("config.deviceOnly", { model: asrChoice?.label ?? model, devices: asrChoice?.devices.join("/") ?? "" })}</p>}
-            {language === "ja" && JA_WEAK_MODELS.has(model) && <p className="warn">{t("config.jaWarn")}</p>}
-            {language === "ko" && JA_WEAK_MODELS.has(model) && <p className="warn">{t("config.koWarn")}</p>}
+            <p className="hint">{hintFor(llmChoice, translationModel)}</p>
+            {!llmDeviceOk && <p className="msg msg-error" role="alert">{t("config.deviceOnly", { model: llmChoice?.label ?? translationModel, devices: llmChoice?.devices.join("/") ?? "" })}</p>}
           </div>
-          {translateTo && (
-            <div className="field-group">
-              <label htmlFor="llm">{t("config.translationModel")}</label>
-              <div className="field-row tight">
-                <select id="llm" value={translationModel} onChange={(e) => setTranslationModel(e.target.value)}>
-                  {llmChoices.map((m) => (
-                    <option key={m.id} value={m.id}>{optionLabel(m)}</option>
-                  ))}
-                </select>
-                <select aria-label={t("config.translationDevice")} value={translationDevice} onChange={(e) => setTranslationDevice(e.target.value as TranslationDevice)}>
-                  {TRANSLATION_DEVICES.map((d) => (
-                    <option key={d.value} value={d.value} disabled={!deviceSupported(llmChoice, d.value)}>{deviceLabel(t, d.label)}</option>
-                  ))}
-                </select>
-              </div>
-              <p className="help-text">{hintFor(llmChoice, translationModel)}</p>
-              {!llmDeviceOk && <p className="error" role="alert">{t("config.deviceOnly", { model: llmChoice?.label ?? translationModel, devices: llmChoice?.devices.join("/") ?? "" })}</p>}
-            </div>
-          )}
-          <fieldset className="formats">
-            <legend>{t("config.formats")}</legend>
+        )}
+        <fieldset className="field formats">
+          <legend>{t("config.formats")}</legend>
+          <div className="chip-group">
             {FORMATS.map((f) => (
-              <label key={f} className="check">
+              <label key={f} className="chip-check">
                 <input type="checkbox" checked={formats.includes(f)} onChange={() => toggleFormat(f)} />
-                {f.toUpperCase()}
+                <span>{f.toUpperCase()}</span>
               </label>
             ))}
-          </fieldset>
-          <label className="check keep-awake">
-            <input type="checkbox" checked={keepAwake} onChange={(e) => setKeepAwake(e.target.checked)} disabled={running} />
-            {t("config.keepAwake")}
-          </label>
-          <p className="help-text">{t("config.keepAwakeHint")}</p>
-        </article>
-
-        <article className="panel">
-          <div className="panel-title">
-            <h2>{t("runtime.title")}</h2>
-            <button type="button" className="link" onClick={runDiagnostics} disabled={diagBusy || !bridge}>
-              {diagBusy ? t("runtime.checking") : t("runtime.recheck")}
-            </button>
           </div>
-          {diagError && <p className="error">{errorMessage(t, diagError)}</p>}
-          <dl>
-            <div><dt>{t("runtime.ffmpeg")}</dt><dd className={diagnostics?.ffmpeg_available ? "ok" : "bad"}>{diagnostics ? (diagnostics.ffmpeg_available ? t("runtime.found") : t("runtime.missing")) : "—"}</dd></div>
-            <div><dt>{t("runtime.openvino")}</dt><dd>{diagnostics?.openvino_version?.split("-")[0] ?? "—"}</dd></div>
-            <div><dt>{t("runtime.devices")}</dt><dd>{diagnostics?.available_devices.join(" · ") || "—"}</dd></div>
-            <div><dt>{t("runtime.autoResolves")}</dt><dd className={diagnostics?.device_resolution?.resolved === "NPU" ? "ok" : ""}>{diagnostics?.device_resolution?.resolved ?? "—"}</dd></div>
-            <div><dt>{t("runtime.speechUsed")}</dt><dd>{job.asrDevice ?? "—"}</dd></div>
-            <div><dt>{t("runtime.translationUsed")}</dt><dd>{job.translationDevice ?? "—"}</dd></div>
-            <div>
-              <dt>{t("runtime.keepAwake")}</dt>
-              <dd className={job.power?.keep_awake ? "ok" : ""} title={job.power?.reason ?? undefined}>
-                {!job.power ? "—" : job.power.keep_awake ? (job.power.throttling_disabled ? t("runtime.awakeFull") : t("runtime.awakeOn")) : job.power.reason === "disabled" ? t("runtime.awakeOff") : t("runtime.awakeUnsupported")}
-              </dd>
-            </div>
-          </dl>
-          {diagnostics && !diagnostics.ffmpeg_available && <p className="warn">{t("runtime.ffmpegHint")}</p>}
-          {(job.asrFallback || job.translationFallback) && (
-            <p className="help-text">{t("runtime.fallback", { reason: job.asrFallback ?? job.translationFallback ?? "" })}</p>
-          )}
-          {missingModels.length > 0 && <p className="warn">{t("runtime.needModels", { models: missingModels.join(", ") })}</p>}
-          {diagAt && (
-            <p className="help-text">{t("runtime.checkedAt", { time: formatLocal(diagAt.toISOString(), locale === "vi" ? "vi-VN" : "en-GB"), tz: offsetLabel(diagAt) })}</p>
-          )}
-        </article>
+        </fieldset>
+        <label className="switch">
+          <input type="checkbox" role="switch" checked={keepAwake} onChange={(e) => setKeepAwake(e.target.checked)} disabled={running} />
+          <span className="switch-track" aria-hidden="true" />
+          <span>{t("config.keepAwake")}</span>
+        </label>
+        <p className="hint">{t("config.keepAwakeHint")}</p>
+      </section>
 
-      </aside>
-
-      <section className="main-pane panel">
-      <section className="action-panel" aria-label={t("job.progress")}>
-        <ol className="stepper">
-          {STEPS.filter((s) => s !== "translating" || translateTo).map((s) => {
-            const idx = STEPS.indexOf(s);
-            const state =
-              job.status === "completed" ? "done"
-              : idx < activeIndex ? "done"
-              : idx === activeIndex ? (job.status === "failed" ? "failed" : "active")
-              : s === "translating" && overlapping ? "active"
-              : "";
-            return <li key={s} className={state}>{t(`steps.${s}` as MessageKey)}{progressText(s)}</li>;
-          })}
-        </ol>
-        <div className="actions">
-          {running ? (
-            <button type="button" className="danger" onClick={() => void bridge?.cancelJob()}>{t("job.cancel")}</button>
-          ) : (
-            <button type="button" onClick={start} disabled={!source || !bridge || formats.length === 0 || missingModels.length > 0 || !asrLanguageOk || !asrDeviceOk || !llmDeviceOk}>
-              {t("job.generate")}
-            </button>
-          )}
+      <section className="card">
+        <div className="card-head">
+          <h2 className="card-title"><span className="step-no" aria-hidden="true">3</span>{t("runtime.title")}</h2>
+          <button type="button" className="btn btn-ghost btn-sm" onClick={runDiagnostics} disabled={diagBusy || !bridge}>
+            <RefreshCw size={14} className={diagBusy ? "spin" : ""} aria-hidden="true" />
+            {diagBusy ? t("runtime.checking") : t("runtime.recheck")}
+          </button>
         </div>
-        {job.status === "failed" && <p className="error wide">{errorMessage(t, job.error)}</p>}
-        {job.status === "cancelled" && <p className="warn wide">{t("job.cancelled")}</p>}
-        {job.status === "completed" && job.outputs.length > 0 && (
-          <p className="success wide">{t("job.wrote", { files: job.outputs.map(baseName).join(", ") })}</p>
+        {diagError && <p className="msg msg-error">{errorMessage(t, diagError)}</p>}
+        <dl className="kv">
+          <div><dt>{t("runtime.ffmpeg")}</dt><dd className={diagnostics?.ffmpeg_available ? "ok" : "bad"}>{diagnostics ? (diagnostics.ffmpeg_available ? t("runtime.found") : t("runtime.missing")) : "—"}</dd></div>
+          <div><dt>{t("runtime.openvino")}</dt><dd>{diagnostics?.openvino_version?.split("-")[0] ?? "—"}</dd></div>
+          <div><dt>{t("runtime.devices")}</dt><dd>{diagnostics?.available_devices.join(" · ") || "—"}</dd></div>
+          <div><dt>{t("runtime.autoResolves")}</dt><dd className={diagnostics?.device_resolution?.resolved === "NPU" ? "ok" : ""}>{diagnostics?.device_resolution?.resolved ?? "—"}</dd></div>
+          <div><dt>{t("runtime.speechUsed")}</dt><dd>{job.asrDevice ?? "—"}</dd></div>
+          <div><dt>{t("runtime.translationUsed")}</dt><dd>{job.translationDevice ?? "—"}</dd></div>
+          <div>
+            <dt>{t("runtime.keepAwake")}</dt>
+            <dd className={job.power?.keep_awake ? "ok" : ""} title={job.power?.reason ?? undefined}>
+              {!job.power ? "—" : job.power.keep_awake ? (job.power.throttling_disabled ? t("runtime.awakeFull") : t("runtime.awakeOn")) : job.power.reason === "disabled" ? t("runtime.awakeOff") : t("runtime.awakeUnsupported")}
+            </dd>
+          </div>
+        </dl>
+        {diagnostics && !diagnostics.ffmpeg_available && <p className="msg msg-warn">{t("runtime.ffmpegHint")}</p>}
+        {(job.asrFallback || job.translationFallback) && (
+          <p className="hint">{t("runtime.fallback", { reason: job.asrFallback ?? job.translationFallback ?? "" })}</p>
         )}
-        {job.logs.length > 0 && (
-          <details className="wide">
-            <summary>{t("job.log", { n: job.logs.length })}</summary>
-            <pre>{job.logs.join("\n")}</pre>
-          </details>
+        {missingModels.length > 0 && <p className="msg msg-warn">{t("runtime.needModels", { models: missingModels.join(", ") })}</p>}
+        {diagAt && (
+          <p className="hint">{t("runtime.checkedAt", { time: formatLocal(diagAt.toISOString(), locale === "vi" ? "vi-VN" : "en-GB"), tz: offsetLabel(diagAt) })}</p>
         )}
       </section>
-        <div className="tabs" role="tablist" aria-label={t("tabs.label")}>
+    </aside>
+  );
+
+  return (
+    <I18nContext.Provider value={i18n}>
+    <div className="app">
+      <a className="skip-link" href="#main">{t("app.skip")}</a>
+      <nav className="rail" aria-label={t("tabs.label")}>
+        <div className="brand">
+          <span className="brand-mark" aria-hidden="true"><AudioLines size={20} /></span>
+          <span className="brand-text">
+            <strong>LocalSub</strong>
+            <span>NPU</span>
+          </span>
+        </div>
+        <div className="nav" role="tablist" aria-orientation="vertical" aria-label={t("tabs.label")}>
           {TABS.map((id) => (
             <button
               key={id}
@@ -488,97 +517,185 @@ export function App() {
               aria-controls={`panel-${id}`}
               aria-selected={tab === id}
               tabIndex={tab === id ? 0 : -1}
-              className={tab === id ? "on" : ""}
+              className="nav-item"
+              title={t(`tabs.${id}` as MessageKey)}
               onClick={() => setTab(id)}
               onKeyDown={(e) => {
-                if (e.key !== "ArrowRight" && e.key !== "ArrowLeft") return;
-                const next = TABS[(TABS.indexOf(id) + (e.key === "ArrowRight" ? 1 : TABS.length - 1)) % TABS.length];
-                setTab(next);
-                document.getElementById(`tab-${next}`)?.focus();
+                if (moveTab(id, e.key)) e.preventDefault();
               }}
             >
-              {t(`tabs.${id}` as MessageKey)}
+              {TAB_ICONS[id]}
+              <span className="nav-label">{t(`tabs.${id}` as MessageKey)}</span>
               {id === "editor" && project ? <span className="count">{project.cues.length}</span> : null}
               {id === "editor" && dirty ? <span className="dot-unsaved" aria-label={t("editor.unsaved")} /> : null}
             </button>
           ))}
         </div>
-        <div className="tab-body" role="tabpanel" id="panel-editor" aria-labelledby="tab-editor" hidden={tab !== "editor"}>
-      {!project && <p className="empty-state">{t("editor.empty")}</p>}
-      {project && (
-        <div className="editor" aria-label={t("editor.title")}>
-          <div className="panel-title">
-            <div>
-              <h2>{t("editor.title")} {dirty && <span className="badge">{t("editor.unsaved")}</span>}</h2>
-              <p className="help-text">
-                {t("editor.summary", { n: project.cues.length, src: project.source_language ?? "?", dst: project.target_language ? ` → ${project.target_language}` : "" })}
-              </p>
-            </div>
-            <button type="button" onClick={exportFiles} disabled={blocking.length > 0 || formats.length === 0}>
-              {t("editor.export", { formats: formats.map((f) => f.toUpperCase()).join(" + ") })}
-            </button>
+        <div className="rail-foot">
+          <div className="segmented" role="group" aria-label={t("theme.label")}>
+            {THEMES.map((m) => (
+              <button key={m.id} type="button" aria-pressed={theme === m.id} title={t(`theme.${m.id}` as MessageKey)} aria-label={t(`theme.${m.id}` as MessageKey)} onClick={() => setTheme(m.id)}>
+                {m.icon}
+              </button>
+            ))}
           </div>
-          {notice && <p className="notice">{notice}</p>}
-          {blocking.length > 0 && <p className="error">{t("editor.fix", { n: blocking.length })}</p>}
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>#</th><th>{t("editor.col.start")}</th><th>{t("editor.col.end")}</th><th>{t("editor.col.source")}</th>
-                  {hasTranslation && <th>{t("editor.col.translation")}</th>}
-                  <th aria-label={t("editor.col.actions")} />
-                </tr>
-              </thead>
-              <tbody>
-                {project.cues.map((cue, i) => {
-                  const rowIssues = issues.filter((x) => x.index === i);
-                  const n = i + 1;
-                  return (
-                    <tr key={`${i}-${cue.start_ms}`} className={rowIssues.some((x) => x.severity === "error") ? "row-error" : ""}>
-                      <td className="num">{n}</td>
-                      <td><TimeField label={t("editor.start", { n })} value={cue.start_ms} onCommit={(ms) => edit(updateCue(project, i, { start_ms: ms }))} /></td>
-                      <td><TimeField label={t("editor.end", { n })} value={cue.end_ms} onCommit={(ms) => edit(updateCue(project, i, { end_ms: ms }))} /></td>
-                      <td>
-                        <textarea aria-label={t("editor.sourceLabel", { n })} value={cue.text} rows={rowsFor(cue.text)} onChange={(e) => edit(updateCue(project, i, { text: e.target.value }))} />
-                        {rowIssues.map((x) => <span key={x.code} className={`issue ${x.severity}`}>{t(`issue.${x.code}` as MessageKey, { limit: x.limit ?? "" })}</span>)}
-                      </td>
-                      {hasTranslation && (
-                        <td><textarea aria-label={t("editor.translationLabel", { n })} value={cue.translation ?? ""} rows={rowsFor(cue.translation ?? "")} onChange={(e) => edit(updateCue(project, i, { translation: e.target.value }))} /></td>
-                      )}
-                      <td className="row-actions">
-                        <button type="button" className="link" onClick={() => edit(splitCue(project, i))} title={t("editor.splitTitle")}>{t("editor.split")}</button>
-                        <button type="button" className="link" onClick={() => edit(mergeWithNext(project, i))} disabled={i === project.cues.length - 1} title={t("editor.mergeTitle")}>{t("editor.merge")}</button>
-                        <button type="button" className="link danger-text" onClick={() => edit(deleteCue(project, i))} title={t("editor.deleteTitle")}>{t("editor.delete")}</button>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+          <div className="segmented" role="group" aria-label={t("app.language")}>
+            {(["vi", "en"] as Locale[]).map((l) => (
+              <button key={l} type="button" aria-pressed={locale === l} onClick={() => setLocale(l)}>
+                {l.toUpperCase()}
+              </button>
+            ))}
           </div>
+          <span className={`env-chip${bridge?.preview ? " preview" : ""}`} title={t("app.eyebrow")}>
+            {bridge?.preview ? t("app.chipPreview") : t("app.chipDesktop")}
+          </span>
         </div>
-      )}
+      </nav>
+
+      <div className="main" id="main">
+        <header className="topbar">
+          <div className="topbar-title">
+            <h1>{t(`tabs.${tab}` as MessageKey)}</h1>
+            <p>{t(`view.${tab}` as MessageKey)}</p>
+          </div>
+          <div className="jobbar" aria-label={t("job.progress")}>
+            <ol className="stepper">
+              {STEPS.filter((s) => s !== "translating" || translateTo).map((s) => {
+                const idx = STEPS.indexOf(s);
+                const state =
+                  job.status === "completed" ? "done"
+                  : idx < activeIndex ? "done"
+                  : idx === activeIndex ? (job.status === "failed" ? "failed" : "active")
+                  : s === "translating" && overlapping ? "active"
+                  : "";
+                return (
+                  <li key={s} className={state} aria-current={state === "active" ? "step" : undefined}>
+                    {stepIcon(state)}
+                    <span>{t(`steps.${s}` as MessageKey)}{progressText(s)}</span>
+                  </li>
+                );
+              })}
+            </ol>
+            {running ? (
+              <button type="button" className="btn btn-danger" onClick={() => void bridge?.cancelJob()}>
+                <Square size={16} aria-hidden="true" />
+                {t("job.cancel")}
+              </button>
+            ) : (
+              <button type="button" className="btn btn-cta" onClick={start} disabled={!canStart}>
+                <Play size={16} aria-hidden="true" />
+                {t("job.generate")}
+              </button>
+            )}
+          </div>
+        </header>
+
+        {(job.status === "failed" || job.status === "cancelled" || (job.status === "completed" && job.outputs.length > 0) || job.logs.length > 0) && (
+          <div className="banner-stack">
+            {job.status === "failed" && <p className="banner banner-error" role="alert"><CircleX size={16} aria-hidden="true" />{errorMessage(t, job.error)}</p>}
+            {job.status === "cancelled" && <p className="banner banner-warn"><Square size={16} aria-hidden="true" />{t("job.cancelled")}</p>}
+            {job.status === "completed" && job.outputs.length > 0 && (
+              <p className="banner banner-success" role="status"><CircleCheck size={16} aria-hidden="true" />{t("job.wrote", { files: job.outputs.map(baseName).join(", ") })}</p>
+            )}
+            {job.logs.length > 0 && (
+              <details className="log">
+                <summary>{t("job.log", { n: job.logs.length })}</summary>
+                <pre>{job.logs.join("\n")}</pre>
+              </details>
+            )}
+          </div>
+        )}
+
+        <div className="view editor-view" role="tabpanel" id="panel-editor" aria-labelledby="tab-editor" hidden={tab !== "editor"}>
+          {setup}
+          <section className="card editor-card" aria-label={t("editor.title")}>
+            {!project && (
+              <div className="empty">
+                <Subtitles size={36} aria-hidden="true" />
+                <p>{t("editor.empty")}</p>
+              </div>
+            )}
+            {project && (
+              <div className="editor">
+                <div className="card-head">
+                  <div>
+                    <h2 className="card-title">{t("editor.title")} {dirty && <span className="badge badge-warn">{t("editor.unsaved")}</span>}</h2>
+                    <p className="hint">
+                      {t("editor.summary", { n: project.cues.length, src: project.source_language ?? "?", dst: project.target_language ? ` → ${project.target_language}` : "" })}
+                    </p>
+                  </div>
+                  <button type="button" className="btn btn-primary" onClick={exportFiles} disabled={blocking.length > 0 || formats.length === 0}>
+                    <Download size={16} aria-hidden="true" />
+                    {t("editor.export", { formats: formats.map((f) => f.toUpperCase()).join(" + ") })}
+                  </button>
+                </div>
+                {notice && <p className="msg msg-info" role="status">{notice}</p>}
+                {blocking.length > 0 && <p className="msg msg-error" role="alert">{t("editor.fix", { n: blocking.length })}</p>}
+                <div className="table-wrap">
+                  <table className="cue-table">
+                    <thead>
+                      <tr>
+                        <th scope="col">#</th><th scope="col">{t("editor.col.start")} / {t("editor.col.end")}</th><th scope="col">{t("editor.col.source")}</th>
+                        {hasTranslation && <th scope="col">{t("editor.col.translation")}</th>}
+                        <th scope="col"><span className="sr-only">{t("editor.col.actions")}</span></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {project.cues.map((cue, i) => {
+                        const rowIssues = issues.filter((x) => x.index === i);
+                        const n = i + 1;
+                        return (
+                          <tr key={`${i}-${cue.start_ms}`} className={rowIssues.some((x) => x.severity === "error") ? "row-error" : ""}>
+                            <td className="num">{n}</td>
+                            <td className="times">
+                              <div>
+                                <TimeField label={t("editor.start", { n })} value={cue.start_ms} onCommit={(ms) => edit(updateCue(project, i, { start_ms: ms }))} />
+                                <TimeField label={t("editor.end", { n })} value={cue.end_ms} onCommit={(ms) => edit(updateCue(project, i, { end_ms: ms }))} />
+                              </div>
+                            </td>
+                            <td>
+                              <textarea aria-label={t("editor.sourceLabel", { n })} value={cue.text} rows={rowsFor(cue.text)} onChange={(e) => edit(updateCue(project, i, { text: e.target.value }))} />
+                              {rowIssues.map((x) => <span key={x.code} className={`issue ${x.severity}`}>{t(`issue.${x.code}` as MessageKey, { limit: x.limit ?? "" })}</span>)}
+                            </td>
+                            {hasTranslation && (
+                              <td><textarea aria-label={t("editor.translationLabel", { n })} value={cue.translation ?? ""} rows={rowsFor(cue.translation ?? "")} onChange={(e) => edit(updateCue(project, i, { translation: e.target.value }))} /></td>
+                            )}
+                            <td className="row-actions">
+                              <button type="button" className="icon-btn" onClick={() => edit(splitCue(project, i))} title={t("editor.splitTitle")} aria-label={`${t("editor.split")} ${n}`}><Scissors size={16} aria-hidden="true" /></button>
+                              <button type="button" className="icon-btn" onClick={() => edit(mergeWithNext(project, i))} disabled={i === project.cues.length - 1} title={t("editor.mergeTitle")} aria-label={`${t("editor.merge")} ${n}`}><Merge size={16} aria-hidden="true" /></button>
+                              <button type="button" className="icon-btn icon-danger" onClick={() => edit(deleteCue(project, i))} title={t("editor.deleteTitle")} aria-label={`${t("editor.delete")} ${n}`}><Trash2 size={16} aria-hidden="true" /></button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+          </section>
         </div>
-        <div className="tab-body" role="tabpanel" id="panel-monitor" aria-labelledby="tab-monitor" hidden={tab !== "monitor"}>
-          <MonitorPanel bridge={bridge} markers={markers} />
+        <div className="view" role="tabpanel" id="panel-monitor" aria-labelledby="tab-monitor" hidden={tab !== "monitor"}>
+          <section className="card"><MonitorPanel bridge={bridge} markers={markers} /></section>
         </div>
-        <div className="tab-body" role="tabpanel" id="panel-history" aria-labelledby="tab-history" hidden={tab !== "history"}>
-          <HistoryPanel bridge={bridge} refreshKey={historyKey} />
+        <div className="view" role="tabpanel" id="panel-history" aria-labelledby="tab-history" hidden={tab !== "history"}>
+          <section className="card"><HistoryPanel bridge={bridge} refreshKey={historyKey} /></section>
         </div>
-        <div className="tab-body" role="tabpanel" id="panel-analysis" aria-labelledby="tab-analysis" hidden={tab !== "analysis"}>
-          <AnalysisPanel bridge={bridge} refreshKey={historyKey} active={tab === "analysis"} />
+        <div className="view" role="tabpanel" id="panel-analysis" aria-labelledby="tab-analysis" hidden={tab !== "analysis"}>
+          <section className="card"><AnalysisPanel bridge={bridge} refreshKey={historyKey} active={tab === "analysis"} /></section>
         </div>
-        <div className="tab-body" role="tabpanel" id="panel-models" aria-labelledby="tab-models" hidden={tab !== "models"}>
-      <ModelManager
-        bridge={bridge}
-        selected={[model, ...(translateTo ? [translationModel] : [])]}
-        jobRunning={running}
-        onChanged={() => void runDiagnostics()}
-      />
+        <div className="view" role="tabpanel" id="panel-models" aria-labelledby="tab-models" hidden={tab !== "models"}>
+          <section className="card">
+            <ModelManager
+              bridge={bridge}
+              selected={[model, ...(translateTo ? [translationModel] : [])]}
+              jobRunning={running}
+              onChanged={() => void runDiagnostics()}
+            />
+          </section>
         </div>
-      </section>
       </div>
-    </main>
+    </div>
     </I18nContext.Provider>
   );
 }

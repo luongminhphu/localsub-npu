@@ -8,7 +8,7 @@
 - Sửa phụ đề trực tiếp trong bảng, xuất **SRT, VTT, TXT** và file dự án `.localsub.json`.
 - Media không bao giờ rời khỏi máy. Sau khi tải model lần đầu, không cần Internet và không cần API key.
 
-> Phiên bản hiện tại: **0.14.1 (GPU hết tài nguyên khi dịch: giữ phần đã dịch và dịch tiếp trên CPU thay vì dừng job) · 0.14.0 (thêm model Whisper large-v3 turbo INT4 và Qwen3 14B, thử nghiệm, GPU/CPU) · 0.13.1 (dịch tiếng Nhật: không còn coi "……", "！？" và tiếng kéo dài là vòng lặp) · 0.13.0 (tối ưu MCP cho Claude: Claude Desktop ghi cấu hình một nút, Claude Code, connector Claude web/di động, kết quả tool gọn hơn ~45%) · 0.12.0 (kết nối Perplexity qua MCP: server HTTP chỉ đọc có khóa API + đường hầm HTTPS) · 0.11.0 (tab Phân tích (AI) và MCP server chỉ đọc để trợ lý AI phân tích hiệu suất, log) · 0.10.0 (thêm tiếng Hàn: nhận dạng và dịch Hàn → Việt/Anh) · 0.9.2 (trả runtime OpenVINO về 2026.4.0 như 0.8.0, tắt mặc định ép tốc độ tối đa EcoQoS) · 0.9.1 (tự phục hồi khi driver NPU bị reset giữa chừng) · 0.9.0 (Wave 7: giữ máy thức và chạy tốc độ tối đa khi xử lý, danh mục model dùng chung, thêm Qwen3.5 và Distil-Whisper)**. Có **bộ cài Windows** (không cần Python/Node/Rust) — xem
+> Phiên bản hiện tại: **0.15.0 (tiếng Trung là ngôn ngữ nói: nhận dạng và dịch Trung → Việt/Anh; giao diện thiết kế lại với chủ đề sáng/tối) · 0.14.1 (GPU hết tài nguyên khi dịch: giữ phần đã dịch và dịch tiếp trên CPU thay vì dừng job) · 0.14.0 (thêm model Whisper large-v3 turbo INT4 và Qwen3 14B, thử nghiệm, GPU/CPU) · 0.13.1 (dịch tiếng Nhật: không còn coi "……", "！？" và tiếng kéo dài là vòng lặp) · 0.13.0 (tối ưu MCP cho Claude: Claude Desktop ghi cấu hình một nút, Claude Code, connector Claude web/di động, kết quả tool gọn hơn ~45%) · 0.12.0 (kết nối Perplexity qua MCP: server HTTP chỉ đọc có khóa API + đường hầm HTTPS) · 0.11.0 (tab Phân tích (AI) và MCP server chỉ đọc để trợ lý AI phân tích hiệu suất, log) · 0.10.0 (thêm tiếng Hàn: nhận dạng và dịch Hàn → Việt/Anh) · 0.9.2 (trả runtime OpenVINO về 2026.4.0 như 0.8.0, tắt mặc định ép tốc độ tối đa EcoQoS) · 0.9.1 (tự phục hồi khi driver NPU bị reset giữa chừng) · 0.9.0 (Wave 7: giữ máy thức và chạy tốc độ tối đa khi xử lý, danh mục model dùng chung, thêm Qwen3.5 và Distil-Whisper)**. Có **bộ cài Windows** (không cần Python/Node/Rust) — xem
 > [Cài nhanh bằng bộ cài](#cài-nhanh-bằng-bộ-cài). Muốn phát triển hoặc chạy dòng lệnh thì cài từ mã nguồn (mục 2–6).
 
 ## Cài nhanh bằng bộ cài
@@ -585,6 +585,13 @@ số câu dịch lỗi (`translation_fallback_lines`) và mã lỗi — **không
 
 **Thêm model mới:** toàn bộ model nằm trong một danh mục `apps/inference/app/catalog.py` (id, repo Hugging Face, dung lượng, cách nạp `whisper`/`llm`/`vlm`, thiết bị chạy được, ngôn ngữ, gợi ý tiếng Việt/Anh). Worker, lệnh `models list` và giao diện đều đọc từ đây, nên thêm một model OpenVINO đã chuyển đổi sẵn chỉ cần thêm một mục, không phải sửa giao diện hay Rust.
 
+### Tiếng Trung (0.15.0)
+
+- Chọn **Tiếng Trung** (hoặc `-Language zh`) khi biết chắc video tiếng Trung (Quan thoại); *Tự nhận diện* cũng nhận đúng `zh`. Trước 0.15.0, video tiếng Trung để *Tự nhận diện* mà có bật dịch sẽ báo lỗi `Cannot translate from detected language 'zh'`. Tên file: `<tên>.zh.srt`.
+- Nên dùng `whisper-large-v3-turbo-int8` (hoặc `medium`); app cảnh báo khi chọn tiny/base/small vì các model nhỏ hay nhầm chữ đồng âm và lẫn giản thể/phồn thể. Whisper trả về chữ giản thể hoặc phồn thể tùy đoạn; app giữ nguyên chữ Whisper trả về.
+- Phụ đề tiếng Trung cắt theo ký tự như tiếng Nhật (tối đa 32 ký tự/câu, ~2 dòng × 16), ưu tiên ngắt sau `，`, `；`, `：`, `。`, `！`, `？`. Ước lượng tốc độ đọc 110 ms/ký tự (~9 ký tự/giây theo hướng dẫn phụ đề tiếng Trung của Netflix), nhanh hơn mức 150 ms của tiếng Nhật. Văn bản có chữ Hán mà không có kana được coi là tiếng Trung.
+- Dịch Trung → Anh/Việt: nên dùng `qwen3-8b-int4-cw` (Qwen được huấn luyện nhiều tiếng Trung). Prompt có quy tắc riêng: văn bản có thể là giản thể hoặc phồn thể; câu tiếng Trung hay lược chủ ngữ và thì, model dùng ngữ cảnh nhưng giữ **một dòng dịch cho mỗi dòng gốc**; dịch thành ngữ (成语) theo nghĩa; tên người Trung Quốc viết theo **âm Hán Việt** khi dịch sang tiếng Việt và theo **pinyin** khi dịch sang tiếng Anh. Không đưa ví dụ tên vào prompt vì model nhỏ hay chép ví dụ vào mọi dòng.
+
 ### Tiếng Hàn (0.10.0)
 
 - Chọn **Tiếng Hàn** (hoặc `-Language ko`) khi biết chắc video tiếng Hàn; *Tự nhận diện* cũng nhận đúng `ko`. Tên file: `<tên>.ko.srt`.
@@ -713,11 +720,17 @@ Phân công hiện tại: **NPU** nhận dạng, **GPU** dịch theo lô và ch�
 
 Vì bước dịch bị giới hạn bởi băng thông RAM, cách tăng tốc hiệu quả nhất vẫn là: dịch theo lô trên GPU, chạy chồng với nhận dạng trên NPU, và không để Windows hạ tốc độ worker (mục trên).
 
-### Giao diện (0.7.0)
+### Giao diện (0.15.0)
 
-- Bố cục một màn hình: cột trái là **Media, Cấu hình, Môi trường chạy**; khung phải có thanh tiến độ + nút **Tạo phụ đề** và 4 tab **Phụ đề / Tải hệ thống / Lịch sử / Model**. Chỉ nội dung trong tab cuộn, cả cửa sổ không cuộn.
-- Khi bấm Tạo phụ đề, app tự chuyển sang tab *Tải hệ thống*; xong job tự chuyển về tab *Phụ đề*. Dùng phím ←/→ để đổi tab.
-- Cửa sổ hẹp hơn 880 px chuyển về một cột.
+Thiết kế lại theo bộ skill [UI/UX Pro Max](https://github.com/nextlevelbuilder/ui-ux-pro-max-skill) (cài trong `.claude/skills/ui-ux-pro-max`), chi tiết ở [`docs/design-system.md`](docs/design-system.md):
+
+- **Thanh điều hướng dọc** bên trái: Phụ đề, Tải hệ thống, Lịch sử, Phân tích (AI), Model. Dùng phím ↑/↓ (hoặc ←/→, Home/End) để đổi mục. Phía dưới là nút chọn giao diện **Theo hệ thống / Sáng / Tối** (nhớ lựa chọn) và chuyển ngôn ngữ VI/EN.
+- **Thanh trên cùng** ghi tên mục, các bước xử lý (biểu tượng đang chạy/xong/lỗi, % và thời gian còn lại) và nút chính **Tạo phụ đề** (màu cam) / **Hủy**, nên thấy được tiến độ ở mọi mục. Kết quả, lỗi và log hiện ngay dưới thanh này.
+- Mục **Phụ đề**: cột trái là các thẻ **Media, Cấu hình, Môi trường chạy**; bên phải là bảng chỉnh phụ đề. Thời gian bắt đầu/kết thúc xếp chung một cột; ô chữ tự giãn theo nội dung; nút tách/gộp/xóa là biểu tượng có nhãn cho trình đọc màn hình.
+- Định dạng xuất là các chip bật/tắt; *Giữ máy thức* là công tắc.
+- Font Fira Sans/Fira Code đóng gói sẵn (chạy offline, có dấu tiếng Việt); chữ Hán/Hàn/Nhật dùng font của Windows. Cỡ chữ nhỏ nhất 12 px, tương phản chữ ≥ 4,5:1 ở cả hai chủ đề, viền focus rõ, tắt chuyển động khi Windows bật *giảm hiệu ứng*.
+- Cửa sổ hẹp hơn 1180 px: bảng phụ đề xuống dưới cột cấu hình; hẹp hơn 900 px: thanh điều hướng chỉ còn biểu tượng; hẹp hơn 600 px: điều hướng chuyển lên trên.
+- Khi bấm Tạo phụ đề, app tự chuyển sang *Tải hệ thống*; xong job tự chuyển về *Phụ đề*.
 
 ### Chart tải CPU / GPU / NPU
 
@@ -867,7 +880,8 @@ CI (GitHub Actions) chạy Python lint/test, frontend lint/type-check/test/build
 13. 0.12.0: kết nối Perplexity — MCP qua Streamable HTTP (khóa API, kiểm tra Origin, giới hạn tần suất, nhật ký truy cập) và đường hầm HTTPS Cloudflare ngay trong app. ✅
 14. 0.13.0: tối ưu MCP cho Claude — Claude Desktop ghi cấu hình bằng một nút (có sao lưu), lệnh Claude Code + quyền chạy tool không cần hỏi, connector Claude web/di động (khóa trong URL), kết quả tool gọn hơn và mô tả tool rõ hơn. ✅
 15. 0.13.1: bản dịch giữ "......", "!!!!" hay "Ahhhh" không còn bị coi là vòng lặp và bị trả về tiếng gốc. ✅
-16. Tiếp theo (backlog): MCP giai đoạn 2 (chạy benchmark/đổi cấu hình có xác nhận), đường hầm có tên để URL cố định, OAuth cho connector, tăng tốc nạp model, đo tốc độ Qwen3.5 trên GPU Arc, chẩn đoán rõ lỗi driver NPU, preset tốc độ/chất lượng, benchmark thiết bị ngay trong app, ký số bộ cài, kèm FFmpeg trong bộ cài, tự cập nhật.
+16. 0.15.0: tiếng Trung là ngôn ngữ nói (nhận dạng `zh`, dịch Trung → Việt/Anh, tên riêng theo âm Hán Việt/pinyin); giao diện thiết kế lại theo UI/UX Pro Max (điều hướng dọc, chủ đề sáng/tối, token màu). ✅
+17. Tiếp theo (backlog): MCP giai đoạn 2 (chạy benchmark/đổi cấu hình có xác nhận), đường hầm có tên để URL cố định, OAuth cho connector, tăng tốc nạp model, đo tốc độ Qwen3.5 trên GPU Arc, chẩn đoán rõ lỗi driver NPU, preset tốc độ/chất lượng, benchmark thiết bị ngay trong app, ký số bộ cài, kèm FFmpeg trong bộ cài, tự cập nhật.
 
 ## Giấy phép
 
