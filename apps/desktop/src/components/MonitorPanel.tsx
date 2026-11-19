@@ -20,9 +20,9 @@ export interface StageMarker {
 }
 
 const SERIES: Array<{ key: MetricKey; label: string; color: string }> = [
-  { key: "cpu", label: "CPU", color: "#60a5fa" },
-  { key: "gpu", label: "GPU", color: "#f59e0b" },
-  { key: "npu", label: "NPU", color: "#34d399" },
+  { key: "cpu", label: "CPU", color: "var(--series-cpu)" },
+  { key: "gpu", label: "GPU", color: "var(--series-gpu)" },
+  { key: "npu", label: "NPU", color: "var(--series-npu)" },
 ];
 const W = 600;
 const H = 160;
@@ -196,7 +196,7 @@ export function MonitorPanel(props: { bridge: WorkerBridge | null; markers: Stag
                   <line key={`m${i}`} x1={m.x} x2={m.x} y1={0} y2={H} className="marker" />
                 ))}
                 {SERIES.map((s) => (
-                  <path key={s.key} d={linePath(samples, s.key, end, W, H)} stroke={s.color} className="series" />
+                  <path key={s.key} d={linePath(samples, s.key, end, W, H)} style={{ stroke: s.color }} className="series" />
                 ))}
               </svg>
               {visibleMarkers.map((m, i) => {

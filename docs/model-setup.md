@@ -70,6 +70,13 @@ VI → EN with better quality) use `--translate-to`:
 4. Task Manager > Performance > NPU 0 shows utilization during the NPU run.
 5. No network traffic during transcription after the model download.
 
+## Chinese source (0.15.0)
+
+- Speech language `zh` (Mandarin; Whisper may return Simplified or Traditional characters); translation directions zh→en, zh→vi (targets stay `en`/`vi`). Auto-detected `zh` is now translated instead of failing with "Cannot translate from detected language 'zh'".
+- Recommended Whisper: `whisper-large-v3-turbo-int8` (or `whisper-medium-int8`).
+- Chinese cues split on characters like Japanese (max 32 characters), preferring breaks after `，；：。！？`. Han text without kana counts as Chinese and gets a 110 ms/char reading-speed estimate (Netflix Chinese guides: 9 cps) instead of Japanese's 150 ms.
+- The prompt adds a Chinese rule (Simplified or Traditional input; omitted subjects/tense; one output line per input line; idioms by meaning; personal names in Sino-Vietnamese (Han-Viet) readings for `vi`, Hanyu pinyin for `en`). No example names: small models copy examples into every line.
+
 ## Korean source (0.10.0)
 
 - Speech language `ko`; translation directions ko→en, ko→vi (targets stay `en`/`vi`).

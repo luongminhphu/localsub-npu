@@ -18,7 +18,7 @@ use std::os::windows::process::CommandExt;
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
-pub const LANGUAGES: &[&str] = &["auto", "en", "ja", "ko", "vi"];
+pub const LANGUAGES: &[&str] = &["auto", "en", "ja", "ko", "vi", "zh"];
 pub const TARGETS: &[&str] = &["en", "vi"];
 pub const DEVICES: &[&str] = &["auto", "NPU", "GPU", "CPU"];
 pub const TASKS: &[&str] = &["transcribe", "translate"];
@@ -489,6 +489,8 @@ mod tests {
         assert!(allowed("language", "ja", LANGUAGES).is_ok());
         assert!(allowed("language", "ko", LANGUAGES).is_ok());
         assert!(allowed("translate_to", "ko", TARGETS).is_err());
+        assert!(allowed("language", "zh", LANGUAGES).is_ok());
+        assert!(allowed("translate_to", "zh", TARGETS).is_err());
         assert!(allowed("translate_to", "ja", TARGETS).is_err());
     }
 

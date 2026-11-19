@@ -25,8 +25,14 @@ from app.models import DeviceResolution
 # "-cw-" = channel-wise symmetric INT4, the layout recommended for Intel NPU.
 TRANSLATION_CATALOG: dict[str, str] = {m: s.repo for m, s in catalog.of_kind("translation").items()}
 DEFAULT_TRANSLATION_MODEL = "qwen3-8b-int4-cw"
-LANGUAGE_NAMES = {"en": "English", "ja": "Japanese", "ko": "Korean", "vi": "Vietnamese"}
-SOURCE_LANGUAGES = ("en", "ja", "ko", "vi")
+LANGUAGE_NAMES = {
+    "en": "English",
+    "ja": "Japanese",
+    "ko": "Korean",
+    "vi": "Vietnamese",
+    "zh": "Chinese",
+}
+SOURCE_LANGUAGES = ("en", "ja", "ko", "vi", "zh")
 TARGET_LANGUAGES = ("en", "vi")
 DEFAULT_BATCH_SIZE = 8
 CONTEXT_LINES = 2
@@ -319,6 +325,19 @@ def build_messages(
             "surrounding lines to understand them, but keep one output line per input line. "
             "Render Korean honorifics and speech levels naturally in the target language, and "
             "keep Korean personal and company names."
+        )
+    if source == "zh":
+        # No example names here either: small models copy examples into every line.
+        names = (
+            "write Chinese personal names with their Sino-Vietnamese (Han-Viet) reading"
+            if target == "vi"
+            else "write Chinese personal names in Hanyu pinyin"
+        )
+        rules += (
+            " The Chinese text may use Simplified or Traditional characters. Chinese subtitle "
+            "lines often omit the subject and tense: use the surrounding lines to understand "
+            f"them, but keep one output line per input line. Translate idioms (chengyu) by "
+            f"meaning, and {names}."
         )
     body = ""
     if context:
