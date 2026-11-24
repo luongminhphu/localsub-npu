@@ -48,6 +48,8 @@ import {
   deleteCue,
   initialJob,
   isProject,
+  maxCpsFor,
+  readingSpeed,
   jobReducer,
   mergeWithNext,
   normalizeProject,
@@ -746,13 +748,17 @@ export function App() {
           <span className="switch-track" aria-hidden="true" />
           <span>{t("config.keepAwake")}</span>
         </label>
-        <p className="hint">{t("config.keepAwakeHint")}</p>
+
         <label className="switch">
           <input type="checkbox" role="switch" checked={autoSave} onChange={(e) => setAutoSave(e.target.checked)} />
           <span className="switch-track" aria-hidden="true" />
           <span>{t("config.autoSave")}</span>
         </label>
-        <p className="hint">{t("config.autoSaveHint")}</p>
+        <details className="more">
+          <summary>{t("config.switchHelp")}</summary>
+          <p className="hint">{t("config.keepAwakeHint")}</p>
+          <p className="hint">{t("config.autoSaveHint")}</p>
+        </details>
       </section>
 
       <section className="card">
@@ -881,6 +887,7 @@ export function App() {
             <p className="sr-only" aria-live="polite">
               {running && job.stage ? t(`steps.${job.stage}` as MessageKey) : ""}
             </p>
+            {job.status !== "idle" && (
             <ol className="stepper">
               {STEPS.filter((s) => s !== "translating" || translateTo).map((s) => {
                 const idx = STEPS.indexOf(s);
@@ -898,6 +905,7 @@ export function App() {
                 );
               })}
             </ol>
+            )}
             {running ? (
               <button type="button" className="btn btn-danger" onClick={() => void bridge?.cancelJob()}>
                 <Square size={16} aria-hidden="true" />
@@ -977,6 +985,11 @@ export function App() {
               <div className="empty">
                 <Subtitles size={36} aria-hidden="true" />
                 <p>{t("editor.empty")}</p>
+                <ol className="empty-steps">
+                  <li>{t("empty.step1")}</li>
+                  <li>{t("empty.step2")}</li>
+                  <li>{t("empty.step3")}</li>
+                </ol>
                 <div className="empty-actions">
                   {!drawerOpen && (
                     <button type="button" className="btn btn-primary" onClick={() => setDrawerOpen(true)}>
@@ -1056,6 +1069,18 @@ export function App() {
                               <div>
                                 <TimeField id={`start-${i}`} label={t("editor.start", { n })} invalidText={t("editor.timeFormat")} value={cue.start_ms} onCommit={(ms) => edit(updateCue(project, i, { start_ms: ms }))} />
                                 <TimeField id={`end-${i}`} label={t("editor.end", { n })} invalidText={t("editor.timeFormat")} value={cue.end_ms} onCommit={(ms) => edit(updateCue(project, i, { end_ms: ms }))} />
+                                {(() => {
+                                  const cps = readingSpeed(cue.text, cue.end_ms - cue.start_ms);
+                                  const fast = cps !== null && cps > maxCpsFor(cue.text);
+                                  return (
+                                    <span className={`cue-meta${fast ? " fast" : ""}`}>
+                                      {t("editor.meta", {
+                                        s: ((cue.end_ms - cue.start_ms) / 1000).toLocaleString(locale === "vi" ? "vi-VN" : "en-GB", { maximumFractionDigits: 1 }),
+                                        cps: cps === null ? "—" : Math.round(cps),
+                                      })}
+                                    </span>
+                                  );
+                                })()}
                               </div>
                             </td>
                             <td>

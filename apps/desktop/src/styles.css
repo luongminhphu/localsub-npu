@@ -63,7 +63,7 @@
 
 :root[data-theme="light"] {
   color-scheme: light;
-  --bg: #f3f5f8;
+  --bg: #e9edf2;
   --surface: #ffffff;
   --surface-2: #f4f8fb;
   --surface-3: #e8eef5;
@@ -99,7 +99,7 @@
 @media (prefers-color-scheme: light) {
   :root:not([data-theme="dark"]) {
     color-scheme: light;
-    --bg: #f3f5f8;
+    --bg: #e9edf2;
     --surface: #ffffff;
     --surface-2: #f4f8fb;
     --surface-3: #e8eef5;
@@ -143,7 +143,7 @@ body {
 }
 h1, h2, h3, p { margin: 0; }
 h1 { font-size: 1.43rem; font-weight: 600; letter-spacing: -0.01em; }
-h2 { font-size: 1.07rem; font-weight: 600; }
+h2 { font-size: 1.143rem; font-weight: 600; }
 h3 { font-size: 1rem; font-weight: 600; }
 button, input, select, textarea { font: inherit; color: inherit; }
 code, pre, .mono { font-family: var(--font-mono); }
@@ -154,6 +154,10 @@ a { color: var(--primary); }
 }
 :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 ::selection { background: var(--primary-soft); }
+html { scrollbar-color: var(--border-strong) transparent; }
+* { scrollbar-width: thin; }
+input, textarea { caret-color: var(--primary); }
+table { font-variant-numeric: tabular-nums; }
 .spin { animation: spin 0.9s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 .skip-link {
@@ -209,11 +213,8 @@ a { color: var(--primary); }
 }
 .segmented button:hover { color: var(--text); }
 .segmented button[aria-pressed="true"] { background: var(--primary-soft); color: var(--text); box-shadow: inset 0 0 0 1px var(--primary); }
-.env-chip {
-  align-self: stretch; font-size: 0.86rem; line-height: 1.35; color: var(--text-muted); text-align: center;
-  padding: var(--space-1) var(--space-2); border-radius: var(--radius); border: 1px solid var(--border);
-}
-.env-chip.preview { color: var(--warning); border-color: currentColor; }
+.env-chip { font-size: 0.86rem; line-height: 1.35; color: var(--text-faint); padding: 0 var(--space-2); }
+.env-chip.preview { color: var(--warning); }
 
 .main { display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; }
 .topbar {
@@ -224,16 +225,25 @@ a { color: var(--primary); }
 .topbar-title p { color: var(--text-muted); font-size: 0.93rem; }
 .jobbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: var(--space-3); }
 
-.stepper { display: flex; flex-wrap: wrap; gap: var(--space-1); list-style: none; margin: 0; padding: 0; }
+.stepper { display: flex; gap: var(--space-1); list-style: none; margin: 0; padding: 0; }
+/* A thin segmented track: each stage is a 3px bar with its label and live count under it. */
 .stepper li {
-  display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px;
-  font-size: 0.86rem; color: var(--text-faint); background: var(--surface); border: 1px solid var(--border);
-  font-variant-numeric: tabular-nums;
+  display: grid; grid-template-columns: auto 1fr; align-items: center; column-gap: 5px; row-gap: 5px;
+  min-width: 76px; font-size: 0.86rem; color: var(--text-faint); font-variant-numeric: tabular-nums; white-space: nowrap;
 }
-.stepper li.active { color: var(--text); border-color: var(--primary); background: var(--primary-soft); font-weight: 600; }
+.stepper li::before {
+  content: ""; grid-column: 1 / -1; height: 3px; border-radius: 2px; background: var(--border);
+  transition: background var(--base) var(--ease);
+}
+.stepper li svg { width: 13px; height: 13px; }
+.stepper li.active { color: var(--text); font-weight: 600; }
+.stepper li.active::before { background: var(--primary); }
 .stepper li.active svg { color: var(--primary); }
-.stepper li.done { color: var(--success); border-color: transparent; background: var(--success-soft); }
-.stepper li.failed { color: var(--danger); border-color: transparent; background: var(--danger-soft); font-weight: 600; }
+.stepper li.done { color: var(--text-muted); }
+.stepper li.done::before { background: var(--success); }
+.stepper li.done svg { color: var(--success); }
+.stepper li.failed { color: var(--danger); font-weight: 600; }
+.stepper li.failed::before { background: var(--danger-solid); }
 
 .banner-stack { display: flex; flex-direction: column; gap: var(--space-2); padding: var(--space-3) var(--space-5) 0; }
 .banner-stack { position: relative; padding-right: calc(var(--space-5) + 40px); }
@@ -304,6 +314,8 @@ a { color: var(--primary); }
 }
 .empty svg { color: var(--text-faint); }
 .empty p { max-width: 42ch; }
+.empty-steps { margin: 0; padding-left: 1.4em; text-align: left; display: grid; gap: var(--space-1); color: var(--text-muted); }
+.empty-steps li::marker { color: var(--primary); font-family: var(--font-mono); }
 .empty-state { color: var(--text-muted); padding: var(--space-5) var(--space-1); }
 
 /* ------------------------------------------------------------------ buttons */
@@ -470,6 +482,11 @@ textarea { min-width: 150px; resize: vertical; line-height: 1.45; padding: 6px 1
 .row-actions { white-space: nowrap; width: 1%; padding-top: 6px; }
 td.times { width: 1%; }
 td.times > div { display: flex; flex-direction: column; gap: 6px; }
+.cue-meta { font-family: var(--font-mono); font-size: 0.86rem; color: var(--text-faint); white-space: nowrap; }
+.cue-meta.fast { color: var(--warning); font-weight: 600; }
+details.more { margin-top: var(--space-2); }
+details.more summary { font-size: 0.86rem; }
+details.more .hint { margin-top: var(--space-1); }
 
 /* ------------------------------------------------------------------ progress */
 .progress-label { display: flex; justify-content: space-between; gap: var(--space-3); font-size: 0.93rem; color: var(--text-muted); margin-bottom: 6px; overflow-wrap: anywhere; }

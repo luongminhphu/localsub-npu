@@ -94,3 +94,13 @@ let the skill run one detector pass at the end of a session.
 - Polish: Runtime key/values in one column, zero-count severity pills without opacity (outlined,
   muted text), editor header names the file, jump label no longer wraps.
 
+## Free refinement pass, 0.19.0
+
+- Reading speed per cue: the editor shows `duration · chars/s` under each cue's times and warns
+  (`too_fast`, a filterable warning) above 17 cps Latin, 12 Hangul, 9 Chinese, 7 Japanese
+  (`maxCpsFor` / `readingSpeed` in `lib/cues.ts`).
+- The stepper is a segmented track (3 px bar per step: primary running, success done, danger failed)
+  and is hidden while idle; the empty editor shows a three-step guide.
+- Switch help folds into a `details` disclosure; thin themed scrollbars, primary caret, tabular
+  numbers in tables; light `--bg` `#e9edf2` so white cards separate; `h2` 16 px; the environment chip
+  is plain text.
