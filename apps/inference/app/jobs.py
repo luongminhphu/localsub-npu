@@ -654,7 +654,11 @@ def _run_job(
 
         overlap: OverlapTranslation | None = None
         target = request.translate_to
-        if target and llm_path is not None:
+        if target and speech_language(None) == target:
+            # Known up front (e.g. Distil-Whisper EN -> en): loading the LLM early is pure waste.
+            record.overlap = False
+            record.overlap_reason = f"speech already in {target}, nothing to translate"
+        elif target and llm_path is not None:
             record.overlap, record.overlap_reason = overlap_plan(
                 request,
                 model.device.resolved,

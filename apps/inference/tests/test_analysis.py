@@ -154,6 +154,15 @@ def test_translation_rules(tmp_path: Path) -> None:
     assert {"translation_bottleneck", "translation_fallback_lines", "overlap_idle"} <= set(found)
 
 
+def test_overlap_idle_ignores_speech_already_in_target(tmp_path: Path) -> None:
+    # Distil-Whisper EN jobs with translate_to=en: nothing to translate, not an idle overlap.
+    same = {"translate_to": "en", "overlap": True, "language": "en", "detected_language": "en"}
+    rows = [job("en-en", **same), job("ja-en", **{**same, "detected_language": "ja"})]
+    report = analysis.analyze(write_log(tmp_path, rows))
+    idle = [f for f in report["findings"] if f["id"] == "overlap_idle"]
+    assert len(idle) == 1 and idle[0]["job_ids"] == ["ja-en"]
+
+
 def test_device_lost_and_failures(tmp_path: Path) -> None:
     rows = [
         job(
