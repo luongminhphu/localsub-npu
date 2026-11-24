@@ -1,14 +1,14 @@
 import { useCallback, useEffect, useState } from "react";
 import { formatDuration, formatLocal, isStale, offsetLabel, parallelText } from "../lib/format";
-import { useI18n, type MessageKey } from "../lib/i18n";
+import { errorMessage, useI18n, type MessageKey } from "../lib/i18n";
 import type { JobHistory } from "../lib/types";
 import type { WorkerBridge } from "../lib/worker";
 
 const LIMIT = 10;
 
 
-export function HistoryPanel(props: { bridge: WorkerBridge | null; refreshKey: number; onOpen?: (path: string) => void }) {
-  const { bridge, refreshKey, onOpen } = props;
+export function HistoryPanel(props: { bridge: WorkerBridge | null; refreshKey: number; onOpen?: (path: string) => void; onModels?: () => void }) {
+  const { bridge, refreshKey, onOpen, onModels } = props;
   const { t, locale } = useI18n();
   const [data, setData] = useState<JobHistory | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -78,6 +78,7 @@ export function HistoryPanel(props: { bridge: WorkerBridge | null; refreshKey: n
               fallbacks: stats.fallbacks,
             })}
           </p>
+          <p className="help-text">{t("history.legend")}</p>
           <div className="table-wrap">
             <table className="history-table">
               <thead>
@@ -103,7 +104,10 @@ export function HistoryPanel(props: { bridge: WorkerBridge | null; refreshKey: n
                       <td className="num">{formatLocal(j.started_at, localeTag)}</td>
                       <td className="file" title={j.source_name ?? ""}>{j.source_name ?? "—"}</td>
                       <td>{lang}</td>
-                      <td title={fallback ?? undefined}>{dev}{tdev}{fallback ? " *" : ""}</td>
+                      <td>
+                        {dev}{tdev}
+                        {fallback && <span className="sub-num warn">{t("queue.fallback", { reason: fallback })}</span>}
+                      </td>
                       <td className="num">{formatDuration(j.source_duration_ms)}</td>
                       <td
                         className="num"
@@ -129,7 +133,10 @@ export function HistoryPanel(props: { bridge: WorkerBridge | null; refreshKey: n
                         <span className={`state-pill ${j.state ?? ""}`} title={j.error_code ?? undefined}>
                           {key ? t(key) : (j.state ?? "—")}
                         </span>
-                        {j.error_code && <span className="issue error">{j.error_code}</span>}
+                        {j.error_code && <span className="issue error">{errorMessage(t, j.error_code)}</span>}
+                        {j.error_code?.startsWith("MODEL_") && onModels && (
+                          <button type="button" className="link" onClick={onModels}>{t("history.toModels")}</button>
+                        )}
                         {j.project_path && onOpen && (
                           <button type="button" className="link" onClick={() => onOpen(j.project_path as string)}>
                             {t("queue.openFile")}
