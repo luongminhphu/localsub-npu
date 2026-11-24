@@ -80,6 +80,7 @@ class TranslationResult:
     tuning: tuple[tuple[int, float], ...] = ()  # (parallel, lines/s) measured while tuning
     # (reason, lines) for lines kept in the source language; reasons sum to fallback_lines.
     fallback_reasons: tuple[tuple[str, int], ...] = ()
+    interjection_lines: int = 0  # Japanese moans transliterated without the LLM
 
 
 # Driver errors after which the device context is unusable: the Intel GPU plugin says that
@@ -473,6 +474,56 @@ def plausible(value: str | None, source: str) -> str | None:
     return value.strip()
 
 
+# Japanese moans, gasps and pants ("あっ、あぁんっ…", "はぁはぁ"): the LLM renders them as
+# "ah, ah, ah, ...", the loop check rejects that, and the line stayed in Japanese (99% of the
+# "loop" fallbacks in real jobs, up to 39% of all lines). They are transliterated instead.
+_KANA_SOUNDS = {
+    **dict.fromkeys("あぁアァ", "a"),
+    **dict.fromkeys("いぃイィ", "i"),
+    **dict.fromkeys("うぅウゥ", "u"),
+    **dict.fromkeys("えぇエェ", "e"),
+    **dict.fromkeys("おぉオォ", "o"),
+    **dict.fromkeys("んン", "n"),
+    **dict.fromkeys("はハ", "ha"),
+    **dict.fromkeys("ひヒ", "hi"),
+    **dict.fromkeys("ふフ", "fu"),
+    **dict.fromkeys("へヘ", "he"),
+    **dict.fromkeys("ほホ", "ho"),
+    **dict.fromkeys("ー〜～", ""),
+}
+_SOUND_BREAK = re.compile(r"[\s、。，．,.…‥！？!?・っッ]+")
+# Kana words with a meaning ("yes", "yeah", "good", "no", "hey") still go to the LLM.
+_MEANINGFUL_KANA = frozenset({"はい", "うん", "いい", "ええ", "いえ", "おい", "ほら", "ふう"})
+_MAX_SOUNDS = 3
+
+
+def interjection(line: str, source: str) -> str | None:
+    """Latin rendering ("Ah... ah... haa...") of a Japanese line made only of interjection
+    kana and punctuation, or ``None`` when the line needs the LLM."""
+    if source != "ja":
+        return None
+    words = [w for w in _SOUND_BREAK.split(line) if w]
+    if not words or any(ch not in _KANA_SOUNDS for w in words for ch in w):
+        return None
+    sounds: list[str] = []
+    for word in words:
+        if re.sub("[ー〜～]", "", word) in _MEANINGFUL_KANA:
+            return None
+        romaji = re.sub(r"(.)\1{2,}", r"\1\1", "".join(_KANA_SOUNDS[ch] for ch in word))
+        unit = re.fullmatch(r"(.+?)\1+", romaji)  # "はぁはぁ" -> "haa" twice
+        for sound in [unit[1]] * (len(romaji) // len(unit[1])) if unit else [romaji]:
+            if sound in ("n", "nn"):
+                sound = "mm"
+            elif set(sound) <= set("aiueo") and sound:
+                sound += "h"  # "a" -> "ah", "oo" -> "ooh"
+            if sound:
+                sounds.append(sound)
+    if not sounds:
+        return None
+    text = "... ".join(sounds[:_MAX_SOUNDS]) + ("..." if len(sounds) > _MAX_SOUNDS else "")
+    return text[0].upper() + text[1:]
+
+
 class _Engine:
     """Translates units of batches on one pipeline: one generate() call per unit, then the
     rejected lines of the unit are retried together as single-line prompts."""
@@ -482,6 +533,7 @@ class _Engine:
         self.source = source
         self.target = target
         self.parallel = max(1, min(parallel, MAX_PARALLEL))
+        self.interjections = 0  # lines rendered by ``interjection`` instead of the LLM
 
     def _run(self, jobs: Sequence[tuple[Sequence[str], Sequence[str]]]) -> list[list[str | None]]:
         """Translate (batch, context) pairs; context comes from source lines, so batches
@@ -509,8 +561,22 @@ class _Engine:
         self, group: Sequence[tuple[list[str], list[str]]]
     ) -> tuple[list[list[str]], dict[str, int]]:
         """Translate one unit; returns the lines and, per reason, the lines kept in the
-        source language after the single-line retry also failed."""
-        parsed = [[v for v, _ in values] for values in self._run(group)]
+        source language after the single-line retry also failed. Interjection lines are
+        rendered without the LLM; only the other lines of each batch are sent."""
+        parsed: list[list[str | None]] = [
+            [interjection(line, self.source) for line in b] for b, _ in group
+        ]
+        asked = [
+            (k, [line for line, v in zip(b, parsed[k], strict=True) if v is None], c)
+            for k, (b, c) in enumerate(group)
+        ]
+        asked = [(k, b, c) for k, b, c in asked if b]
+        answers = self._run([(b, c) for _, b, c in asked]) if asked else []
+        for (k, _, _), values in zip(asked, answers, strict=True):
+            slots = [i for i, v in enumerate(parsed[k]) if v is None]
+            for i, (value, _) in zip(slots, values, strict=True):
+                parsed[k][i] = value
+        rendered = sum(len(b) for b, _ in group) - sum(len(b) for _, b, _ in asked)
         reasons: dict[str, int] = {}
         # Keep the source text for lines the model still fails so the editor can fix them.
         misses = [
@@ -525,6 +591,7 @@ class _Engine:
                     key = reason or "missing"
                     reasons[key] = reasons.get(key, 0) + 1
                 parsed[b][i] = value or group[b][0][i]
+        self.interjections += rendered  # only once the unit succeeded (back-off re-runs it)
         return [[v or "" for v in values] for values in parsed], reasons
 
 
@@ -775,6 +842,7 @@ def translate_feed(
                         parallel=size,
                         tuning=tuple(tuner.samples),
                         fallback_reasons=tuple(sorted(reasons.items())),
+                        interjection_lines=engine.interjections,
                     ),
                 ) from exc
             if tuner.back_off(size):
@@ -798,4 +866,5 @@ def translate_feed(
         parallel=tuner.parallel,
         tuning=tuple(tuner.samples),
         fallback_reasons=tuple(sorted(reasons.items())),
+        interjection_lines=engine.interjections,
     )

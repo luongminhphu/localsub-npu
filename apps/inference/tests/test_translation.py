@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 
 import pytest
@@ -320,3 +321,45 @@ def test_failure_at_minimum_level_still_raises(monkeypatch, batched) -> None:
     with pytest.raises(LocalSubError) as err:
         translation.translate_lines(gpu_translator(llm), LONG[:40], "en", "vi")
     assert err.value.code == ErrorCode.TRANSLATION_FAILED
+
+
+class LoopingLLM(FakeLLM):
+    """Renders every source line as a degenerate "ah, ah, ah, ..." like Qwen does for moans."""
+
+    def generate(self, prompt, config=None, **_kwargs):
+        if isinstance(prompt, list):
+            return super().generate(prompt, config)
+        self.prompts.append(prompt)
+        body = prompt.split("Translate to", 1)[1]
+        numbers = re.findall(r"^(\d+)\. ", body, flags=re.M)
+        return "\n".join(f"{n}. " + ", ".join(["ah"] * 8) for n in numbers)
+
+
+def test_japanese_interjection_lines_skip_the_llm() -> None:
+    llm = LoopingLLM()
+    lines = ["あっ、あっ、あぁんっ…", "はぁはぁ", "アッアッアッアッアッアッアッアッ"]
+    result = translation.translate_lines(make_translator(llm), lines, "ja", "en")
+    assert llm.prompts == []  # no LLM call at all
+    assert result.fallback_lines == 0 and result.interjection_lines == 3
+    for out in result.lines:
+        assert out and out.isascii() and len(out) <= 40
+    assert result.lines[0].startswith("Ah")
+
+
+def test_interjections_mixed_with_speech_keep_alignment() -> None:
+    llm = FakeLLM()
+    lines = ["こんにちは", "あぁ…", "ありがとう"]
+    result = translation.translate_lines(make_translator(llm), lines, "ja", "en")
+    assert result.lines[0] == "[vi] こんにちは" and result.lines[2] == "[vi] ありがとう"
+    assert result.lines[1].isascii() and result.interjection_lines == 1
+    assert "あぁ" not in llm.prompts[0]
+
+
+@pytest.mark.parametrize("line", ["はい", "うん、うん", "いい…いいっ", "あ、本当", "", "…"])
+def test_meaningful_or_empty_lines_are_not_interjections(line: str) -> None:
+    assert translation.interjection(line, "ja") is None
+
+
+def test_interjections_only_for_japanese() -> None:
+    assert translation.interjection("あっ", "ko") is None
+
