@@ -50,6 +50,8 @@ def build_ffmpeg_command(ffmpeg: str, source: Path, destination: Path) -> list[s
         "-loglevel", "error",
         "-y",
         "-i", str(source),
+        # Only the first audio track: default selection decodes the most-channel track (5.1).
+        "-map", "0:a:0",
         "-vn", "-sn", "-dn",
         "-ac", "1",
         "-ar", str(SAMPLE_RATE),
