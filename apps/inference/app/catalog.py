@@ -15,7 +15,11 @@ UI or Rust change is needed for a new pre-converted OpenVINO model.
 
 from __future__ import annotations
 
+import json
+import os
+import re
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 ALL_DEVICES = ("NPU", "GPU", "CPU")
@@ -50,7 +54,7 @@ class ModelSpec:
         }
 
 
-MODELS: tuple[ModelSpec, ...] = (
+BUILTIN_MODELS: tuple[ModelSpec, ...] = (
     # --- Speech recognition (Whisper) -------------------------------------------------
     ModelSpec(
         "whisper-small-int8",
@@ -243,6 +247,89 @@ MODELS: tuple[ModelSpec, ...] = (
         experimental=True,
         min_openvino="2026.4",
     ),
+)
+
+# --- Models found on Hugging Face by ``models discover`` -------------------------------
+# Only OpenVINO's own pre-converted repos whose names match what the worker can run.
+DISCOVERED_FILE = "discovered.json"
+_ASR_REPO = re.compile(r"(distil-)?whisper-[a-z0-9.-]+-int[48]-ov", re.IGNORECASE)
+# Qwen2.5 base models are not chat-tuned, so only its -Instruct builds; Qwen3+ are chat models.
+_LLM_REPO = re.compile(
+    r"qwen(2\.5-[0-9.]+b-instruct|[3-9][0-9.]*-[0-9.]+b)-int4(-cw)?-ov", re.IGNORECASE
+)
+_RUNTIME_BY_TAG = {
+    "automatic-speech-recognition": "whisper",
+    "text-generation": "llm",
+    "image-text-to-text": "vlm",
+}
+
+
+def spec_from_hub(repo: str, pipeline_tag: str | None, approx_mb: int = 0) -> ModelSpec | None:
+    """A ModelSpec for an ``OpenVINO/<name>`` repo, or None when the worker cannot run it."""
+    owner, _, name = repo.partition("/")
+    runtime = _RUNTIME_BY_TAG.get(pipeline_tag or "")
+    if owner != "OpenVINO" or runtime is None:
+        return None
+    if runtime == "whisper":
+        if not _ASR_REPO.fullmatch(name):
+            return None
+        kind = "asr"
+    elif _LLM_REPO.fullmatch(name):
+        kind = "translation"
+    else:
+        return None
+    model_id = name[: -len("-ov")].lower()
+    # INT4 builds that are not channel-wise (-cw) are GPU/CPU only, like the catalog's INT4 models.
+    int4_gpu = "int4" in model_id and not model_id.endswith("-cw")
+    return ModelSpec(
+        model_id,
+        kind,
+        repo,
+        name[: -len("-ov")],
+        max(int(approx_mb), 0),
+        runtime,
+        "Tự tìm thấy trên Hugging Face (OpenVINO); chưa đo trên máy này.",
+        "Found on Hugging Face (OpenVINO); not measured on this machine yet.",
+        devices=("GPU", "CPU") if int4_gpu or runtime == "vlm" else ALL_DEVICES,
+        languages=("en",) if model_id.startswith("distil-") else None,
+        experimental=True,
+        min_openvino="2026.4" if runtime == "vlm" else None,
+        tags=("discovered",),
+    )
+
+
+def discovered_path(model_dir: Path) -> Path:
+    return model_dir / DISCOVERED_FILE
+
+
+def read_discovered(path: Path) -> list[dict[str, Any]]:
+    try:
+        rows = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    return [r for r in rows if isinstance(r, dict)] if isinstance(rows, list) else []
+
+
+def load_discovered(path: Path, builtin: tuple[ModelSpec, ...]) -> tuple[ModelSpec, ...]:
+    """Specs saved by ``models discover``, rebuilt (and so re-validated) from repo names."""
+    taken = {m.id for m in builtin} | {m.repo.lower() for m in builtin}
+    specs = []
+    for row in read_discovered(path):
+        try:
+            repo, tag = str(row["repo"]), row.get("pipeline_tag")
+            found = spec_from_hub(repo, tag, row.get("approx_mb", 0))
+        except (KeyError, TypeError, ValueError):
+            continue
+        if found and found.id not in taken and found.repo.lower() not in taken:
+            taken |= {found.id, found.repo.lower()}
+            specs.append(found)
+    return tuple(specs)
+
+
+# shortcut: read at import from LOCALSUB_MODEL_DIR (the desktop always sets it); a CLI that
+# sets the model dir only in .env sees discovered models once that variable is exported.
+MODELS: tuple[ModelSpec, ...] = BUILTIN_MODELS + load_discovered(
+    discovered_path(Path(os.getenv("LOCALSUB_MODEL_DIR", "./data/models"))), BUILTIN_MODELS
 )
 
 BY_ID: dict[str, ModelSpec] = {m.id: m for m in MODELS}

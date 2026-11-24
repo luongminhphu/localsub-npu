@@ -96,6 +96,16 @@ async fn list_models() -> Result<String, String> {
         .map_err(|e| e.to_string())?
 }
 
+/// Search Hugging Face for new OpenVINO models and add them to the worker's catalog.
+#[tauri::command]
+async fn discover_models() -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        run_to_string(&["models".into(), "discover".into()], None)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 /// Spawn the worker, stream stdout lines as `event` and stderr as `log`, emit `exit` at the end.
 fn spawn_streaming(
     app: AppHandle,
@@ -433,6 +443,7 @@ fn main() {
             system_metrics,
             run_diagnostics,
             list_models,
+            discover_models,
             start_job,
             cancel_job,
             download_model,

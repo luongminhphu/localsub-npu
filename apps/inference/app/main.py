@@ -54,6 +54,7 @@ def build_parser() -> argparse.ArgumentParser:
     models = sub.add_parser("models", help="List or download OpenVINO models")
     models_sub = models.add_subparsers(dest="models_command", required=True)
     models_sub.add_parser("list")
+    models_sub.add_parser("discover", help="Find new OpenVINO models on Hugging Face")
     download = models_sub.add_parser("download", help="Download or resume a model")
     download.add_argument("model_id", choices=sorted(ALL_MODELS))
     download.add_argument(
@@ -301,6 +302,9 @@ def _cmd_export(args: argparse.Namespace) -> int:
 def _cmd_models(args: argparse.Namespace, settings: Settings) -> int:
     if args.models_command == "list":
         _print_json(model_store.list_models(settings.model_dir))
+        return 0
+    if args.models_command == "discover":
+        _print_json(model_store.discover(settings.model_dir))
         return 0
     if args.models_command == "remove":
         _print_json(model_store.remove(settings.model_dir, args.model_id))
