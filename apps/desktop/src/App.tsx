@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import {
   Activity,
   AudioLines,
@@ -6,6 +6,7 @@ import {
   CircleCheck,
   CircleX,
   Circle,
+  Clapperboard,
   Download,
   FileVideo,
   FolderOpen,
@@ -15,6 +16,7 @@ import {
   Monitor,
   Moon,
   Play,
+  Redo2,
   RefreshCw,
   Scissors,
   Sparkles,
@@ -22,6 +24,7 @@ import {
   Sun,
   Subtitles,
   Trash2,
+  Undo2,
   X,
 } from "lucide-react";
 import { AnalysisPanel } from "./components/AnalysisPanel";
@@ -60,6 +63,7 @@ import type {
   Diagnostics,
   ExportFormat,
   JobConfig,
+  JobView,
   LocalSubProject,
   SpokenLanguage,
   TargetLanguage,
@@ -84,9 +88,10 @@ const DEVICES: Array<{ value: DevicePreference; label: string }> = [
   { value: "CPU", label: "CPU" },
 ];
 const TRANSLATION_DEVICES: Array<{ value: TranslationDevice; label: string }> = DEVICES;
-type Tab = "editor" | "monitor" | "history" | "analysis" | "models";
-const TABS: Tab[] = ["editor", "monitor", "history", "analysis", "models"];
+type Tab = "run" | "editor" | "monitor" | "history" | "analysis" | "models";
+const TABS: Tab[] = ["run", "editor", "monitor", "history", "analysis", "models"];
 const TAB_ICONS: Record<Tab, ReactNode> = {
+  run: <Clapperboard size={18} aria-hidden="true" />,
   editor: <Subtitles size={18} aria-hidden="true" />,
   monitor: <Activity size={18} aria-hidden="true" />,
   history: <History size={18} aria-hidden="true" />,
@@ -116,23 +121,51 @@ function rowsFor(text: string): number {
   return Math.min(7, Math.max(2, Math.ceil(text.length / 22) + 1));
 }
 
-function TimeField(props: { label: string; value: number; onCommit: (ms: number) => void }) {
+/** One finished file of a queue run, for the summary shown when the queue ends. */
+interface RunResult {
+  file: string;
+  status: JobView["status"];
+  asr: string | null;
+  mt: string | null;
+  fallback: string | null;
+}
+
+function TimeField(props: { id: string; label: string; invalidText: string; value: number; onCommit: (ms: number) => void }) {
   const [draft, setDraft] = useState(formatTime(props.value));
   const [invalid, setInvalid] = useState(false);
   useEffect(() => setDraft(formatTime(props.value)), [props.value]);
   return (
-    <input
-      aria-label={props.label}
-      className={`time-input${invalid ? " invalid" : ""}`}
-      value={draft}
-      onChange={(e) => setDraft(e.target.value)}
-      onBlur={() => {
-        const ms = parseTime(draft);
-        setInvalid(ms === null);
-        if (ms !== null) props.onCommit(ms);
-      }}
-    />
+    <>
+      <input
+        aria-label={props.label}
+        aria-invalid={invalid}
+        aria-describedby={invalid ? `${props.id}-err` : undefined}
+        className={`time-input${invalid ? " invalid" : ""}`}
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") e.currentTarget.blur(); // commit like leaving the field
+        }}
+        onBlur={() => {
+          const ms = parseTime(draft);
+          setInvalid(ms === null);
+          if (ms !== null) props.onCommit(ms);
+        }}
+      />
+      {invalid && <span className="issue error" id={`${props.id}-err`}>{props.invalidText}</span>}
+    </>
   );
+}
+
+/** Alt+Up/Down in a cue text box moves to the same column of the previous/next visible cue. */
+function moveBetweenCues(e: ReactKeyboardEvent<HTMLTextAreaElement>) {
+  if (!e.altKey || (e.key !== "ArrowUp" && e.key !== "ArrowDown")) return;
+  const col = e.currentTarget.dataset.col;
+  const boxes = Array.from(document.querySelectorAll<HTMLTextAreaElement>(`.cue-table textarea[data-col="${col}"]`));
+  const next = boxes[boxes.indexOf(e.currentTarget) + (e.key === "ArrowUp" ? -1 : 1)];
+  if (!next) return;
+  e.preventDefault();
+  next.focus();
 }
 
 export function App() {
@@ -153,6 +186,8 @@ export function App() {
   const [source, setSource] = useState<string | null>(null);
   // Files waiting to run after the current job, each with the settings in place when it starts.
   const [queue, setQueue] = useState<string[]>([]);
+  // Files finished since the last manual start: the queue position and the end-of-queue summary.
+  const [runLog, setRunLog] = useState<RunResult[]>([]);
   const [keptEdits, setKeptEdits] = useState(false);
   const [language, setLanguage] = useState<SpokenLanguage>("auto");
   const [model, setModel] = useState("whisper-small-int8");
@@ -160,7 +195,7 @@ export function App() {
   const [translateTo, setTranslateTo] = useState<TargetLanguage>("vi");
   const [translationModel, setTranslationModel] = useState("qwen3-8b-int4-cw");
   const [translationDevice, setTranslationDevice] = useState<TranslationDevice>("auto");
-  const [tab, setTab] = useState<Tab>("editor");
+  const [tab, setTab] = useState<Tab>("run");
   const [formats, setFormats] = useState<ExportFormat[]>(["srt", "json"]);
   const [diagnostics, setDiagnostics] = useState<Diagnostics | null>(null);
   const [diagError, setDiagError] = useState<string | null>(null);
@@ -168,6 +203,12 @@ export function App() {
   const [job, dispatch] = useReducer(jobReducer, initialJob);
   const [project, setProject] = useState<LocalSubProject | null>(null);
   const [dirty, setDirty] = useState(false);
+  // Snapshots for Undo/Redo of cue edits; a run of typing in one box is one step.
+  const [undoStack, setUndoStack] = useState<LocalSubProject[]>([]);
+  const [redoStack, setRedoStack] = useState<LocalSubProject[]>([]);
+  const lastEditKey = useRef<string | null>(null);
+  const [onlyIssues, setOnlyIssues] = useState(false);
+  const [jumpTo, setJumpTo] = useState("");
   // Where the editor's project was last written (job output, opened file or export), for auto-save.
   const [projectBase, setProjectBase] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -326,17 +367,23 @@ export function App() {
       return;
     }
     const json = outputs.find((o) => o.endsWith(".localsub.json")) ?? outputs[0];
-    setProject(next);
+    showProject(next);
     setProjectBase(json ? outputBaseFromSavePath(json) : null);
-    setDirty(false);
     setKeptEdits(false);
     if (showEditor) setTab("editor");
   };
 
-  // A finished or failed job shows its result and starts the next queued file; Cancel stops the queue.
+  // A finished or failed job is logged, shows its result and starts the next queued file;
+  // Cancel stops the queue.
   useEffect(() => {
+    const finished = job.status === "completed" || job.status === "failed";
+    if (!finished && job.status !== "cancelled") return;
+    if (source) {
+      const result = { file: source, status: job.status, asr: job.asrDevice, mt: job.translationDevice };
+      setRunLog((log) => [...log, { ...result, fallback: job.asrFallback ?? job.translationFallback }]);
+    }
     if (job.status === "completed" && job.project) void takeResult(job.project, job.outputs, !queue.length);
-    if ((job.status !== "completed" && job.status !== "failed") || !queue.length) return;
+    if (!finished || !queue.length) return;
     const [next, ...rest] = queue;
     setQueue(rest);
     setSource(next);
@@ -351,9 +398,77 @@ export function App() {
     setQueue((q) => [...q, ...picked]);
   };
 
-  const edit = (next: LocalSubProject) => {
+  /** Replace the editor's project (job result or opened file); its undo history starts empty. */
+  const showProject = (next: LocalSubProject) => {
+    setProject(next);
+    setDirty(false);
+    setUndoStack([]);
+    setRedoStack([]);
+    lastEditKey.current = null;
+  };
+
+  /** Apply an edit. ``key`` names a typing run (one undo step per run); null = always a step. */
+  const edit = (next: LocalSubProject, key: string | null = null) => {
+    if (project && (key === null || key !== lastEditKey.current)) {
+      setUndoStack((stack) => [...stack.slice(-99), project]);
+      setRedoStack([]);
+    }
+    lastEditKey.current = key;
     setProject(next);
     setDirty(true);
+  };
+
+  /** Split/merge/delete: one undo step, announced with how to take it back. */
+  const structural = (next: LocalSubProject, message: "editor.didSplit" | "editor.didMerge" | "editor.didDelete", n: number) => {
+    edit(next);
+    setNotice(t(message, { n }));
+  };
+
+  const undo = useCallback(() => {
+    if (!project || !undoStack.length) return;
+    setRedoStack((stack) => [...stack, project]);
+    setProject(undoStack[undoStack.length - 1]);
+    setUndoStack((stack) => stack.slice(0, -1));
+    setDirty(true);
+    lastEditKey.current = null;
+  }, [project, undoStack]);
+
+  const redo = useCallback(() => {
+    if (!project || !redoStack.length) return;
+    setUndoStack((stack) => [...stack, project]);
+    setProject(redoStack[redoStack.length - 1]);
+    setRedoStack((stack) => stack.slice(0, -1));
+    setDirty(true);
+    lastEditKey.current = null;
+  }, [project, redoStack]);
+
+  // Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y in the editor; inside a text box the browser's own undo runs.
+  useEffect(() => {
+    if (tab !== "editor") return;
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey)) return;
+      const target = e.target as HTMLElement | null;
+      if (target?.closest("textarea, input")) return;
+      const key = e.key.toLowerCase();
+      if (key === "z" && !e.shiftKey) undo();
+      else if ((key === "z" && e.shiftKey) || key === "y") redo();
+      else return;
+      e.preventDefault();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [tab, undo, redo]);
+
+  const jumpToCue = () => {
+    const n = Number(jumpTo);
+    if (!project || !Number.isInteger(n) || n < 1 || n > project.cues.length) return;
+    setOnlyIssues(false);
+    // after the filter is off, the row exists; focus its source text box
+    window.setTimeout(() => {
+      const box = document.querySelector<HTMLTextAreaElement>(`.cue-table textarea[data-col="src"][data-row="${n - 1}"]`);
+      box?.scrollIntoView({ block: "center" });
+      box?.focus();
+    });
   };
 
   const exportFiles = async () => {
@@ -370,11 +485,10 @@ export function App() {
     try {
       const data = await bridge.loadProject(path);
       if (!isProject(data)) throw new Error(t("editor.notProject"));
-      setProject(normalizeProject(data));
+      showProject(normalizeProject(data));
       setProjectBase(outputBaseFromSavePath(path));
       setTab("editor");
       setSource(data.source_media ?? source);
-      setDirty(false);
       setNotice(t("editor.opened", { file: baseName(path) }));
     } catch (err) {
       setNotice(t("editor.openFailed", { error: String(err) }));
@@ -397,7 +511,18 @@ export function App() {
     : state === "failed" ? <CircleX size={14} aria-hidden="true" />
     : state === "active" ? <Loader2 size={14} className="spin" aria-hidden="true" />
     : <Circle size={14} aria-hidden="true" />;
-  const canStart = Boolean(source && bridge) && formats.length > 0 && missingModels.length === 0 && asrLanguageOk && asrDeviceOk && llmDeviceOk;
+  // The first unmet condition, shown next to the disabled Generate button.
+  const blockReason = !source
+    ? t("why.noFile")
+    : formats.length === 0
+      ? t("why.noFormat")
+      : missingModels.length > 0
+        ? t("why.needModels", { models: missingModels.join(", ") })
+        : !asrLanguageOk || !asrDeviceOk || !llmDeviceOk
+          ? t("why.config")
+          : null;
+  const canStart = Boolean(bridge) && blockReason === null;
+  const queueTotal = runLog.length + 1 + queue.length;
 
   const moveTab = (from: Tab, key: string) => {
     const delta = key === "ArrowDown" || key === "ArrowRight" ? 1 : key === "ArrowUp" || key === "ArrowLeft" ? -1 : 0;
@@ -414,8 +539,8 @@ export function App() {
         <h2 className="card-title"><span className="step-no" aria-hidden="true">1</span>{t("media.title")}</h2>
         <button type="button" className="drop-zone" onClick={() => void pickMedia()} disabled={!bridge}>
           <FileVideo size={22} aria-hidden="true" />
-          <span className="drop-title">{running ? t("queue.add") : source ? baseName(source) : t("media.choose")}</span>
-          <span className="drop-hint">{t("media.hint")}</span>
+          <span className="drop-title">{source ? baseName(source) : t("media.choose")}</span>
+          <span className="drop-hint">{running ? t("queue.add") : t("media.hint")}</span>
         </button>
         {source && <p className="path" title={source}>{source}</p>}
         {queue.length > 0 && (
@@ -532,7 +657,7 @@ export function App() {
 
       <section className="card">
         <div className="card-head">
-          <h2 className="card-title"><span className="step-no" aria-hidden="true">3</span>{t("runtime.title")}</h2>
+          <h2 className="card-title">{t("runtime.title")}</h2>
           <button type="button" className="btn btn-ghost btn-sm" onClick={runDiagnostics} disabled={diagBusy || !bridge}>
             <RefreshCw size={14} className={diagBusy ? "spin" : ""} aria-hidden="true" />
             {diagBusy ? t("runtime.checking") : t("runtime.recheck")}
@@ -597,7 +722,12 @@ export function App() {
               {TAB_ICONS[id]}
               <span className="nav-label">{t(`tabs.${id}` as MessageKey)}</span>
               {id === "editor" && project ? <span className="count">{project.cues.length}</span> : null}
-              {id === "editor" && dirty ? <span className="dot-unsaved" aria-label={t("editor.unsaved")} /> : null}
+              {id === "editor" && dirty ? (
+                <>
+                  <span className="dot-unsaved" aria-hidden="true" />
+                  <span className="sr-only">{t("editor.unsaved")}</span>
+                </>
+              ) : null}
             </button>
           ))}
         </div>
@@ -629,6 +759,14 @@ export function App() {
             <p>{t(`view.${tab}` as MessageKey)}</p>
           </div>
           <div className="jobbar" aria-label={t("job.progress")}>
+            {running && source && (
+              <span className="job-file" title={source}>
+                {queueTotal > 1 ? t("queue.position", { n: runLog.length + 1, total: queueTotal, file: baseName(source) }) : baseName(source)}
+              </span>
+            )}
+            <p className="sr-only" aria-live="polite">
+              {running && job.stage ? t(`steps.${job.stage}` as MessageKey) : ""}
+            </p>
             <ol className="stepper">
               {STEPS.filter((s) => s !== "translating" || translateTo).map((s) => {
                 const idx = STEPS.indexOf(s);
@@ -652,15 +790,27 @@ export function App() {
                 {t("job.cancel")}
               </button>
             ) : (
-              <button type="button" className="btn btn-cta" onClick={() => void start()} disabled={!canStart}>
-                <Play size={16} aria-hidden="true" />
-                {t("job.generate")}
-              </button>
+              <>
+                {blockReason && <span className="cta-reason" id="cta-reason">{blockReason}</span>}
+                <button
+                  type="button"
+                  className="btn btn-cta"
+                  onClick={() => {
+                    setRunLog([]);
+                    void start();
+                  }}
+                  disabled={!canStart}
+                  aria-describedby={blockReason ? "cta-reason" : undefined}
+                >
+                  <Play size={16} aria-hidden="true" />
+                  {t("job.generate")}
+                </button>
+              </>
             )}
           </div>
         </header>
 
-        {(job.status === "failed" || job.status === "cancelled" || (job.status === "completed" && job.outputs.length > 0) || job.logs.length > 0 || keptEdits) && (
+        {(job.status === "failed" || job.status === "cancelled" || (job.status === "completed" && job.outputs.length > 0) || job.logs.length > 0 || keptEdits || (!running && runLog.length > 1)) && (
           <div className="banner-stack">
             {job.status === "failed" && <p className="banner banner-error" role="alert"><CircleX size={16} aria-hidden="true" />{errorMessage(t, job.error)}</p>}
             {job.status === "cancelled" && <p className="banner banner-warn"><Square size={16} aria-hidden="true" />{t("job.cancelled")}</p>}
@@ -668,6 +818,25 @@ export function App() {
               <p className="banner banner-success" role="status"><CircleCheck size={16} aria-hidden="true" />{t("job.wrote", { files: job.outputs.map(baseName).join(", ") })}</p>
             )}
             {keptEdits && <p className="banner banner-warn" role="status">{t("queue.keptEdits")}</p>}
+            {!running && runLog.length > 1 && (
+              <section className="banner banner-info queue-summary" aria-label={t("queue.summaryTitle")}>
+                <div className="queue-summary-head">
+                  <strong>{t("queue.summary", { ok: runLog.filter((r) => r.status === "completed").length, total: runLog.length })}</strong>
+                  <button type="button" className="link" onClick={() => setTab("history")}>{t("queue.openHistory")}</button>
+                </div>
+                <ol>
+                  {runLog.map((r, i) => (
+                    <li key={`${i}-${r.file}`} className={r.status}>
+                      {r.status === "completed" ? <CircleCheck size={14} aria-hidden="true" /> : <CircleX size={14} aria-hidden="true" />}
+                      <span className="queue-file" title={r.file}>{baseName(r.file)}</span>
+                      <span>{t(`history.state.${r.status === "running" || r.status === "idle" ? "failed" : r.status}` as MessageKey)}</span>
+                      <span className="queue-devices">{[r.asr, r.mt].filter(Boolean).join(" → ") || "—"}</span>
+                      {r.fallback && <span className="hint">{r.fallback}</span>}
+                    </li>
+                  ))}
+                </ol>
+              </section>
+            )}
             {job.logs.length > 0 && (
               <details className="log">
                 <summary>{t("job.log", { n: job.logs.length })}</summary>
@@ -677,13 +846,25 @@ export function App() {
           </div>
         )}
 
-        <div className="view editor-view" role="tabpanel" id="panel-editor" aria-labelledby="tab-editor" hidden={tab !== "editor"}>
+        <div className="view run-view" role="tabpanel" id="panel-run" aria-labelledby="tab-run" hidden={tab !== "run"}>
           {setup}
+        </div>
+        <div className="view" role="tabpanel" id="panel-editor" aria-labelledby="tab-editor" hidden={tab !== "editor"}>
           <section className="card editor-card" aria-label={t("editor.title")}>
             {!project && (
               <div className="empty">
                 <Subtitles size={36} aria-hidden="true" />
                 <p>{t("editor.empty")}</p>
+                <div className="empty-actions">
+                  <button type="button" className="btn btn-primary" onClick={() => setTab("run")}>
+                    <Clapperboard size={16} aria-hidden="true" />
+                    {t("editor.goRun")}
+                  </button>
+                  <button type="button" className="btn btn-secondary" onClick={openProject} disabled={!bridge || running}>
+                    <FolderOpen size={16} aria-hidden="true" />
+                    {t("media.openProject")}
+                  </button>
+                </div>
               </div>
             )}
             {project && (
@@ -700,8 +881,33 @@ export function App() {
                     {t("editor.export", { formats: formats.map((f) => f.toUpperCase()).join(" + ") })}
                   </button>
                 </div>
+                <div className="editor-tools">
+                  <button type="button" className="icon-btn" onClick={undo} disabled={!undoStack.length} title={t("editor.undoTitle")} aria-label={t("editor.undo")}>
+                    <Undo2 size={16} aria-hidden="true" />
+                  </button>
+                  <button type="button" className="icon-btn" onClick={redo} disabled={!redoStack.length} title={t("editor.redoTitle")} aria-label={t("editor.redo")}>
+                    <Redo2 size={16} aria-hidden="true" />
+                  </button>
+                  <label className="switch">
+                    <input type="checkbox" role="switch" checked={onlyIssues} onChange={(e) => setOnlyIssues(e.target.checked)} />
+                    <span className="switch-track" aria-hidden="true" />
+                    <span>{t("editor.onlyIssues", { n: new Set(issues.map((x) => x.index)).size })}</span>
+                  </label>
+                  <form
+                    className="jump"
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      jumpToCue();
+                    }}
+                  >
+                    <label htmlFor="jump-cue">{t("editor.jump")}</label>
+                    <input id="jump-cue" type="number" min={1} max={project.cues.length} value={jumpTo} onChange={(e) => setJumpTo(e.target.value)} />
+                  </form>
+                  <span className="hint">{t("editor.keys")}</span>
+                </div>
                 {notice && <p className="msg msg-info" role="status">{notice}</p>}
                 {blocking.length > 0 && <p className="msg msg-error" role="alert">{t("editor.fix", { n: blocking.length })}</p>}
+                {onlyIssues && issues.length === 0 && <p className="hint">{t("editor.noIssues")}</p>}
                 <div className="table-wrap">
                   <table className="cue-table">
                     <thead>
@@ -714,27 +920,29 @@ export function App() {
                     <tbody>
                       {project.cues.map((cue, i) => {
                         const rowIssues = issues.filter((x) => x.index === i);
+                        if (onlyIssues && !rowIssues.length) return null;
                         const n = i + 1;
+                        const issueIds = rowIssues.map((x) => `issue-${i}-${x.code}`).join(" ") || undefined;
                         return (
                           <tr key={`${i}-${cue.start_ms}`} className={rowIssues.some((x) => x.severity === "error") ? "row-error" : ""}>
                             <td className="num">{n}</td>
                             <td className="times">
                               <div>
-                                <TimeField label={t("editor.start", { n })} value={cue.start_ms} onCommit={(ms) => edit(updateCue(project, i, { start_ms: ms }))} />
-                                <TimeField label={t("editor.end", { n })} value={cue.end_ms} onCommit={(ms) => edit(updateCue(project, i, { end_ms: ms }))} />
+                                <TimeField id={`start-${i}`} label={t("editor.start", { n })} invalidText={t("editor.timeFormat")} value={cue.start_ms} onCommit={(ms) => edit(updateCue(project, i, { start_ms: ms }))} />
+                                <TimeField id={`end-${i}`} label={t("editor.end", { n })} invalidText={t("editor.timeFormat")} value={cue.end_ms} onCommit={(ms) => edit(updateCue(project, i, { end_ms: ms }))} />
                               </div>
                             </td>
                             <td>
-                              <textarea aria-label={t("editor.sourceLabel", { n })} value={cue.text} rows={rowsFor(cue.text)} onChange={(e) => edit(updateCue(project, i, { text: e.target.value }))} />
-                              {rowIssues.map((x) => <span key={x.code} className={`issue ${x.severity}`}>{t(`issue.${x.code}` as MessageKey, { limit: x.limit ?? "" })}</span>)}
+                              <textarea data-row={i} data-col="src" aria-label={t("editor.sourceLabel", { n })} aria-describedby={issueIds} value={cue.text} rows={rowsFor(cue.text)} onKeyDown={moveBetweenCues} onChange={(e) => edit(updateCue(project, i, { text: e.target.value }), `src-${i}`)} />
+                              {rowIssues.map((x) => <span key={x.code} id={`issue-${i}-${x.code}`} className={`issue ${x.severity}`}>{t(`issue.${x.code}` as MessageKey, { limit: x.limit ?? "" })}</span>)}
                             </td>
                             {hasTranslation && (
-                              <td><textarea aria-label={t("editor.translationLabel", { n })} value={cue.translation ?? ""} rows={rowsFor(cue.translation ?? "")} onChange={(e) => edit(updateCue(project, i, { translation: e.target.value }))} /></td>
+                              <td><textarea data-row={i} data-col="tr" aria-label={t("editor.translationLabel", { n })} value={cue.translation ?? ""} rows={rowsFor(cue.translation ?? "")} onKeyDown={moveBetweenCues} onChange={(e) => edit(updateCue(project, i, { translation: e.target.value }), `tr-${i}`)} /></td>
                             )}
                             <td className="row-actions">
-                              <button type="button" className="icon-btn" onClick={() => edit(splitCue(project, i))} title={t("editor.splitTitle")} aria-label={`${t("editor.split")} ${n}`}><Scissors size={16} aria-hidden="true" /></button>
-                              <button type="button" className="icon-btn" onClick={() => edit(mergeWithNext(project, i))} disabled={i === project.cues.length - 1} title={t("editor.mergeTitle")} aria-label={`${t("editor.merge")} ${n}`}><Merge size={16} aria-hidden="true" /></button>
-                              <button type="button" className="icon-btn icon-danger" onClick={() => edit(deleteCue(project, i))} title={t("editor.deleteTitle")} aria-label={`${t("editor.delete")} ${n}`}><Trash2 size={16} aria-hidden="true" /></button>
+                              <button type="button" className="icon-btn" onClick={() => structural(splitCue(project, i), "editor.didSplit", n)} title={t("editor.splitTitle")} aria-label={`${t("editor.split")} ${n}`}><Scissors size={16} aria-hidden="true" /></button>
+                              <button type="button" className="icon-btn" onClick={() => structural(mergeWithNext(project, i), "editor.didMerge", n)} disabled={i === project.cues.length - 1} title={t("editor.mergeTitle")} aria-label={`${t("editor.merge")} ${n}`}><Merge size={16} aria-hidden="true" /></button>
+                              <button type="button" className="icon-btn icon-danger" onClick={() => structural(deleteCue(project, i), "editor.didDelete", n)} title={t("editor.deleteTitle")} aria-label={`${t("editor.delete")} ${n}`}><Trash2 size={16} aria-hidden="true" /></button>
                             </td>
                           </tr>
                         );
