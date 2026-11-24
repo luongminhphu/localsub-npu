@@ -30,8 +30,10 @@ const POLL_MS = 1_000;
 
 const pct = (v: number | null) => (v === null ? "—" : `${Math.round(v)}%`);
 
-export function MonitorPanel(props: { bridge: WorkerBridge | null; markers: StageMarker[] }) {
-  const { bridge, markers } = props;
+/** ``active``: the tab is on screen. Sampling GPU engines costs CPU from the same power budget
+ * the NPU/GPU job uses, so polling (and with it the native sampler) stops while hidden. */
+export function MonitorPanel(props: { bridge: WorkerBridge | null; markers: StageMarker[]; active: boolean }) {
+  const { bridge, markers, active } = props;
   const { t, locale } = useI18n();
   const [snapshot, setSnapshot] = useState<MetricsSnapshot | null>(null);
   const [samples, setSamples] = useState<MetricSample[]>([]);
@@ -57,7 +59,7 @@ export function MonitorPanel(props: { bridge: WorkerBridge | null; markers: Stag
   }, [bridge]);
 
   useEffect(() => {
-    if (!bridge || paused) return;
+    if (!bridge || paused || !active) return;
     let timer = 0;
     let cancelled = false;
     const tick = async () => {
@@ -70,7 +72,7 @@ export function MonitorPanel(props: { bridge: WorkerBridge | null; markers: Stag
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [bridge, paused, poll]);
+  }, [bridge, paused, active, poll]);
 
   const last = samples[samples.length - 1];
   const fresh = freshness(last?.at_ms ?? null, now);
