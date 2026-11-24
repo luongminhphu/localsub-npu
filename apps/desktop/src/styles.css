@@ -444,6 +444,7 @@ th {
 }
 td { vertical-align: top; padding: 6px var(--space-2); border-bottom: 1px solid var(--border); }
 tbody tr:last-child td { border-bottom: 0; }
+.more-rows td { text-align: center; padding: var(--space-3); }
 tbody tr:hover td { background: var(--surface-2); }
 td.num { color: var(--text-faint); font-family: var(--font-mono); font-size: 0.86rem; padding-top: 12px; width: 40px; font-variant-numeric: tabular-nums; }
 .editor { display: flex; flex-direction: column; gap: var(--space-2); }
@@ -505,8 +506,10 @@ td.times > div { display: flex; flex-direction: column; gap: 6px; }
 .metric-value { font-family: var(--font-mono); font-size: 1.57rem; font-weight: 500; font-variant-numeric: tabular-nums; margin-top: 2px; }
 .metric-sub, .metric-name { font-size: 0.86rem; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .chart-wrap { display: grid; grid-template-columns: 40px 1fr; gap: 6px; }
-.chart-y { display: flex; flex-direction: column; justify-content: space-between; font-family: var(--font-mono); font-size: 0.86rem; color: var(--text-faint); text-align: right; height: 200px; }
-.chart-area { position: relative; height: 200px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-2); overflow: hidden; }
+.chart-y { display: flex; flex-direction: column; justify-content: space-between; font-family: var(--font-mono); font-size: 0.86rem; color: var(--text-faint); text-align: right; height: 200px; padding-top: 22px; }
+/* The top 22px band holds the stage labels, so they never sit on the plotted lines. */
+.chart-area { position: relative; height: 200px; padding-top: 22px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-2); overflow: hidden; }
+.chart-area svg { border-top: 1px dashed var(--border); }
 .chart-area svg { width: 100%; height: 100%; display: block; }
 .chart-area .grid { stroke: var(--border); stroke-width: 1; vector-effect: non-scaling-stroke; }
 .chart-area .marker { stroke: var(--series-marker); stroke-width: 1; stroke-dasharray: 4 4; vector-effect: non-scaling-stroke; }

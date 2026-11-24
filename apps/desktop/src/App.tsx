@@ -98,6 +98,9 @@ const TAB_ICONS: Record<Tab, ReactNode> = {
   analysis: <Sparkles size={18} aria-hidden="true" />,
   models: <Boxes size={18} aria-hidden="true" />,
 };
+// shortcut: rows are appended in chunks while scrolling (bounded first render and tab stops),
+// not windowed; switch to a virtualised list if episodes with thousands of cues get slow.
+const ROW_CHUNK = 150;
 const JA_WEAK_MODELS = new Set(["whisper-tiny-int8", "whisper-base-int8", "whisper-small-int8"]);
 const FORMATS: ExportFormat[] = ["srt", "vtt", "txt", "json"];
 const STEPS: WorkerStage[] = [
@@ -208,6 +211,9 @@ export function App() {
   const [redoStack, setRedoStack] = useState<LocalSubProject[]>([]);
   const lastEditKey = useRef<string | null>(null);
   const [onlyIssues, setOnlyIssues] = useState(false);
+  const [rowLimit, setRowLimit] = useState(ROW_CHUNK);
+  const moreRowsRef = useRef<HTMLTableRowElement | null>(null);
+  const quickSaveRef = useRef<() => void>(() => undefined);
   const [jumpTo, setJumpTo] = useState("");
   // Where the editor's project was last written (job output, opened file or export), for auto-save.
   const [projectBase, setProjectBase] = useState<string | null>(null);
@@ -269,6 +275,11 @@ export function App() {
   const installed = useMemo(() => new Set(diagnostics?.installed_models ?? []), [diagnostics]);
   const issues = useMemo(() => (project ? validateCues(project.cues) : []), [project]);
   const blocking = issues.filter((i) => i.severity === "error");
+  const issuesByRow = useMemo(() => {
+    const byRow = new Map<number, typeof issues>();
+    for (const issue of issues) byRow.set(issue.index, [...(byRow.get(issue.index) ?? []), issue]);
+    return byRow;
+  }, [issues]);
   const running = job.status === "running";
   // Stage changes of the current job, drawn as markers on the load chart.
   const [markers, setMarkers] = useState<StageMarker[]>([]);
@@ -299,6 +310,8 @@ export function App() {
     return ` ${shown}${eta === null ? "" : ` · ${t("job.eta", { eta: formatDuration(eta) })}`}`;
   };
   const hasTranslation = Boolean(project?.cues.some((c) => c.translation !== null));
+  // Indices of the cues the table shows (all, or only those with issues).
+  const shownRows = (project?.cues ?? []).map((_, i) => i).filter((i) => !onlyIssues || issuesByRow.has(i));
   const whisperChoices = choices.filter((c) => c.kind === "asr");
   const llmChoices = choices.filter((c) => c.kind === "translation");
   const asrChoice = findChoice(choices, model);
@@ -404,6 +417,7 @@ export function App() {
     setDirty(false);
     setUndoStack([]);
     setRedoStack([]);
+    setRowLimit(ROW_CHUNK);
     lastEditKey.current = null;
   };
 
@@ -442,11 +456,26 @@ export function App() {
     lastEditKey.current = null;
   }, [project, redoStack]);
 
-  // Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y in the editor; inside a text box the browser's own undo runs.
+  // Ctrl+S saves to where the project was last written, or asks where (like the Export button).
+  useEffect(() => {
+    quickSaveRef.current = () => {
+      if (!project || blocking.length || formats.length === 0) return;
+      if (projectBase) void saveTo(projectBase, "editor.saved");
+      else void exportFiles();
+    };
+  });
+
+  // Ctrl+S, and Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y in the editor; inside a text box the browser's own
+  // undo runs.
   useEffect(() => {
     if (tab !== "editor") return;
     const onKey = (e: KeyboardEvent) => {
       if (!(e.ctrlKey || e.metaKey)) return;
+      if (e.key.toLowerCase() === "s") {
+        e.preventDefault();
+        quickSaveRef.current();
+        return;
+      }
       const target = e.target as HTMLElement | null;
       if (target?.closest("textarea, input")) return;
       const key = e.key.toLowerCase();
@@ -463,13 +492,28 @@ export function App() {
     const n = Number(jumpTo);
     if (!project || !Number.isInteger(n) || n < 1 || n > project.cues.length) return;
     setOnlyIssues(false);
-    // after the filter is off, the row exists; focus its source text box
+    setRowLimit((limit) => Math.max(limit, n + 20));
+    // after the filter is off and the row is rendered, focus its source text box
     window.setTimeout(() => {
       const box = document.querySelector<HTMLTextAreaElement>(`.cue-table textarea[data-col="src"][data-row="${n - 1}"]`);
       box?.scrollIntoView({ block: "center" });
       box?.focus();
     });
   };
+
+  // Load the next chunk of rows when the "more rows" row comes near the visible area.
+  useEffect(() => {
+    const row = moreRowsRef.current;
+    if (!row || tab !== "editor") return;
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) setRowLimit((limit) => limit + ROW_CHUNK);
+      },
+      { rootMargin: "600px 0px" },
+    );
+    observer.observe(row);
+    return () => observer.disconnect();
+  }, [tab, rowLimit, project, onlyIssues]);
 
   const exportFiles = async () => {
     if (!bridge || !project || blocking.length) return;
@@ -918,9 +962,9 @@ export function App() {
                       </tr>
                     </thead>
                     <tbody>
-                      {project.cues.map((cue, i) => {
-                        const rowIssues = issues.filter((x) => x.index === i);
-                        if (onlyIssues && !rowIssues.length) return null;
+                      {shownRows.slice(0, rowLimit).map((i) => {
+                        const cue = project.cues[i];
+                        const rowIssues = issuesByRow.get(i) ?? [];
                         const n = i + 1;
                         const issueIds = rowIssues.map((x) => `issue-${i}-${x.code}`).join(" ") || undefined;
                         return (
@@ -947,6 +991,15 @@ export function App() {
                           </tr>
                         );
                       })}
+                      {shownRows.length > rowLimit && (
+                        <tr ref={moreRowsRef} className="more-rows">
+                          <td colSpan={hasTranslation ? 5 : 4}>
+                            <button type="button" className="link" onClick={() => setRowLimit((limit) => limit + ROW_CHUNK)}>
+                              {t("editor.moreRows", { n: shownRows.length - rowLimit })}
+                            </button>
+                          </td>
+                        </tr>
+                      )}
                     </tbody>
                   </table>
                 </div>
