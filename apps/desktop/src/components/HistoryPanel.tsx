@@ -7,8 +7,8 @@ import type { WorkerBridge } from "../lib/worker";
 const LIMIT = 10;
 
 
-export function HistoryPanel(props: { bridge: WorkerBridge | null; refreshKey: number }) {
-  const { bridge, refreshKey } = props;
+export function HistoryPanel(props: { bridge: WorkerBridge | null; refreshKey: number; onOpen?: (path: string) => void }) {
+  const { bridge, refreshKey, onOpen } = props;
   const { t, locale } = useI18n();
   const [data, setData] = useState<JobHistory | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -130,6 +130,11 @@ export function HistoryPanel(props: { bridge: WorkerBridge | null; refreshKey: n
                           {key ? t(key) : (j.state ?? "—")}
                         </span>
                         {j.error_code && <span className="issue error">{j.error_code}</span>}
+                        {j.project_path && onOpen && (
+                          <button type="button" className="link" onClick={() => onOpen(j.project_path as string)}>
+                            {t("queue.openFile")}
+                          </button>
+                        )}
                       </td>
                     </tr>
                   );

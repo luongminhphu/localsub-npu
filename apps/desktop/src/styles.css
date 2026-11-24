@@ -236,6 +236,8 @@ a { color: var(--primary); }
 .stepper li.failed { color: var(--danger); border-color: transparent; background: var(--danger-soft); font-weight: 600; }
 
 .banner-stack { display: flex; flex-direction: column; gap: var(--space-2); padding: var(--space-3) var(--space-5) 0; }
+.banner-stack { position: relative; padding-right: calc(var(--space-5) + 40px); }
+.banner-close { position: absolute; top: var(--space-3); right: var(--space-5); }
 .banner {
   display: flex; align-items: flex-start; gap: var(--space-2); padding: var(--space-2) var(--space-3);
   border-radius: var(--radius); font-size: 0.93rem; overflow-wrap: anywhere;
@@ -262,12 +264,16 @@ a { color: var(--primary); }
 
 .view { flex: 1; min-height: 0; overflow: auto; padding: var(--space-4) var(--space-5) var(--space-5); }
 .view[hidden] { display: none; }
-.setup { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: var(--space-4); align-items: start; }
+.setup { display: grid; grid-template-columns: 1fr; gap: var(--space-3); align-items: start; }
+.editor-view { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-4); align-items: start; }
+.editor-view.with-drawer { grid-template-columns: minmax(0, 1fr) minmax(320px, 380px); }
+.drawer { position: sticky; top: 0; max-height: calc(100vh - 150px); overflow: auto; display: flex; flex-direction: column; gap: var(--space-3); }
+.drawer-head { display: flex; align-items: center; justify-content: space-between; }
 .editor-card { min-height: 100%; }
 .empty-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: var(--space-2); }
 .editor-tools { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-4); }
 .editor-tools .switch { margin: 0; }
-.jump { display: inline-flex; align-items: center; gap: var(--space-2); }
+.jump { display: inline-flex; align-items: center; gap: var(--space-2); white-space: nowrap; }
 .jump input { width: 6.5em; font-family: var(--font-mono); }
 .job-file {
   max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -372,7 +378,8 @@ option:disabled { color: var(--text-faint); }
 .queue-title { font-size: 0.93rem; font-weight: 600; margin-bottom: var(--space-1); }
 .queue-list { margin: 0 0 var(--space-1); padding-left: 22px; }
 .queue-list li { font-size: 0.93rem; }
-.queue-list li > span { display: inline-block; max-width: calc(100% - 40px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: middle; }
+.queue-list li > span:first-child { display: inline-block; max-width: calc(100% - 40px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: middle; }
+.queue-config { display: block; font-size: 0.86rem; color: var(--text-muted); }
 .chip-group { display: flex; flex-wrap: wrap; gap: var(--space-2); }
 .chip-check { position: relative; cursor: pointer; }
 .chip-check input { position: absolute; opacity: 0; inset: 0; margin: 0; cursor: pointer; }
@@ -431,6 +438,7 @@ input[type="checkbox"] { accent-color: var(--primary); width: 16px; height: 16px
 
 /* key/value lists */
 dl, .kv { margin: 0; display: grid; grid-template-columns: 1fr 1fr; column-gap: var(--space-4); }
+.kv { grid-template-columns: 1fr; }
 dl div { display: flex; justify-content: space-between; gap: var(--space-2); padding: 6px 0; border-bottom: 1px solid var(--border); min-width: 0; font-size: 0.93rem; }
 dt { color: var(--text-muted); }
 dd { margin: 0; text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono); font-size: 0.86rem; }
@@ -528,7 +536,8 @@ td.times > div { display: flex; flex-direction: column; gap: 6px; }
 .sev-pill.high { background: var(--danger-soft); color: var(--danger); }
 .sev-pill.medium { background: var(--warning-soft); color: var(--warning); }
 .sev-pill.low { background: var(--info-soft); color: var(--info); }
-.sev-pill.zero { opacity: 0.55; }
+/* Zero counts stay readable (4.5:1): muted text on an outlined pill instead of opacity. */
+.sev-pill.zero { background: transparent; border: 1px dashed var(--border-strong); color: var(--text-muted); }
 .ok-text { margin: var(--space-2) 0; }
 .findings { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-3); }
 /* Severity is carried by the labelled .sev-pill, so the card keeps a plain border. */
@@ -597,6 +606,8 @@ code.inline { display: inline; padding: 1px 6px; border-radius: 4px; background:
 @container (max-width: 640px) { .monitor-legend { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 1180px) {
   .editor .table-wrap { max-height: none; }
+  .editor-view.with-drawer { grid-template-columns: 1fr; }
+  .drawer { order: -1; position: static; max-height: none; }
 }
 @media (max-width: 900px) {
   :root { --rail: 64px; }

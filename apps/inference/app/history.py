@@ -57,6 +57,11 @@ def summarize(record: dict[str, Any]) -> dict[str, Any]:
         "cue_count": record.get("cue_count"),
         "translation_fallback_lines": record.get("translation_fallback_lines"),
         "error_code": record.get("error_code"),
+        # Local-only: lets the desktop History reopen a job's subtitles (MCP drops it).
+        "project_path": next(
+            (str(o) for o in record.get("outputs") or [] if str(o).endswith(".localsub.json")),
+            None,
+        ),
     }
 
 

@@ -181,3 +181,23 @@ def test_history_missing_log_and_limit_clamp(tmp_path):
     )
     assert len(history.recent_jobs(log, limit=0)["jobs"]) == 1
     assert history.recent_jobs(log, limit=2)["jobs"][0]["job_id"] == "4"
+
+
+def test_history_points_at_the_project_file_but_mcp_does_not(tmp_path):
+    from app import mcp_server
+    from app.config import Settings
+
+    record = {
+        "job_id": "j1",
+        "state": "completed",
+        "source_path": r"C:\Users\phu\Videos\ep01.mp4",
+        "outputs": [r"C:\out\ep01.ja.srt", r"C:\out\ep01.localsub.json"],
+    }
+    assert history.summarize(record)["project_path"] == r"C:\out\ep01.localsub.json"
+    assert history.summarize({"job_id": "j2", "outputs": [r"C:\out\a.srt"]})["project_path"] is None
+    log = tmp_path / "output" / "logs" / "jobs.jsonl"
+    log.parent.mkdir(parents=True)
+    log.write_text(json.dumps(record) + "\n", encoding="utf-8")
+    settings = Settings("auto", "ffmpeg", tmp_path / "output", tmp_path / "models", "INFO")
+    job = mcp_server.LocalSubMcp(settings).tool_list_jobs({"limit": 5})["jobs"][0]
+    assert "project_path" not in job and "localsub.json" not in json.dumps(job)

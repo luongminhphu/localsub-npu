@@ -163,6 +163,7 @@ class LocalSubMcp:
 
     def _summary(self, record: dict[str, Any]) -> dict[str, Any]:
         out = history.summarize(record)
+        out.pop("project_path", None)  # a full local path; never sent to the AI assistant
         out["source_name"] = analysis.display_name(record.get("source_path"), self.redact)
         out["source_kind"] = analysis.source_kind(record.get("source_path"))
         out["openvino_version"] = record.get("openvino_version")
