@@ -1,4 +1,4 @@
-import type { JobView, LocalSubProject, ProjectCue, WorkerEvent } from "./types";
+import { SPOKEN_LANGUAGES, type JobView, type LocalSubProject, type ProjectCue, type WorkerEvent } from "./types";
 
 export const MAX_CUE_CHARS = 84;
 /** Japanese: ~2 lines x 16 full-width characters (mirrors the worker's segmentation). */
@@ -272,6 +272,8 @@ export function defaultOutputBase(source: string | null): string {
 }
 
 /** Strip a user-chosen save path back to a base: "talk.vi.srt" -> "talk". */
+const SAVE_SUFFIX = new RegExp(`(\\.localsub)?(\\.(${SPOKEN_LANGUAGES.join("|")}))?\\.(srt|vtt|txt|json)$`, "i");
+
 export function outputBaseFromSavePath(path: string): string {
-  return path.replace(/(\.localsub)?(\.(en|vi|ja|ko|zh|auto))?\.(srt|vtt|txt|json)$/i, "");
+  return path.replace(SAVE_SUFFIX, "");
 }

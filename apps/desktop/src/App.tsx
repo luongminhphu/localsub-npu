@@ -179,11 +179,8 @@ export function App() {
 
   useEffect(() => {
     safeStorage()?.setItem(KEEP_AWAKE_KEY, keepAwake ? "1" : "0");
-  }, [keepAwake]);
-
-  useEffect(() => {
     safeStorage()?.setItem(AUTO_SAVE_KEY, autoSave ? "1" : "0");
-  }, [autoSave]);
+  }, [keepAwake, autoSave]);
 
   useEffect(() => {
     const root = document.documentElement;
@@ -226,7 +223,7 @@ export function App() {
     if (job.status === "completed" || job.status === "failed" || job.status === "cancelled") {
       setHistoryKey((k) => k + 1);
     }
-  }, [job.status, job.project]);
+  }, [job.status]);
 
   const installed = useMemo(() => new Set(diagnostics?.installed_models ?? []), [diagnostics]);
   const issues = useMemo(() => (project ? validateCues(project.cues) : []), [project]);
@@ -305,33 +302,40 @@ export function App() {
     }
   };
 
+  /** Write the editor's project to ``base``; on success it is no longer dirty. */
+  const saveTo = async (base: string, message: "editor.saved" | "editor.autoSaved"): Promise<boolean> => {
+    if (!bridge || !project) return false;
+    try {
+      const written = await bridge.exportProject(project, base, formats);
+      setProjectBase(base);
+      setDirty(false);
+      setKeptEdits(false);
+      setNotice(t(message, { n: written.length, files: written.map(baseName).join(", ") }));
+      return true;
+    } catch (err) {
+      setNotice(t("editor.exportFailed", { error: errorMessage(t, String(err)) }));
+      return false;
+    }
+  };
+
   /** Show a finished job's subtitles; unsaved edits are auto-saved first, or kept as they are. */
-  const takeResult = async (next: LocalSubProject, outputs: string[]) => {
-    if (dirty && project) {
-      if (!autoSave || !projectBase || !bridge || blocking.length) {
-        setKeptEdits(true); // never replace unsaved edits; the new job's files are already on disk
-        return;
-      }
-      try {
-        const written = await bridge.exportProject(project, projectBase, formats);
-        setNotice(t("editor.autoSaved", { n: written.length, files: written.map(baseName).join(", ") }));
-      } catch (err) {
-        setKeptEdits(true);
-        setNotice(t("editor.exportFailed", { error: errorMessage(t, String(err)) }));
-        return;
-      }
+  const takeResult = async (next: LocalSubProject, outputs: string[], showEditor: boolean) => {
+    const canAutoSave = autoSave && projectBase !== null && blocking.length === 0;
+    if (dirty && !(canAutoSave && (await saveTo(projectBase, "editor.autoSaved")))) {
+      setKeptEdits(true); // never replace unsaved edits; the new job's files are already on disk
+      return;
     }
     const json = outputs.find((o) => o.endsWith(".localsub.json")) ?? outputs[0];
     setProject(next);
     setProjectBase(json ? outputBaseFromSavePath(json) : null);
     setDirty(false);
     setKeptEdits(false);
-    if (!queue.length) setTab("editor");
+    if (showEditor) setTab("editor");
   };
 
   // A finished or failed job shows its result and starts the next queued file; Cancel stops the queue.
   useEffect(() => {
-    if (job.status === "completed" && job.project) void takeResult(job.project, job.outputs);
+    if (job.status === "completed" && job.project) void takeResult(job.project, job.outputs, !queue.length);
     if ((job.status !== "completed" && job.status !== "failed") || !queue.length) return;
     const [next, ...rest] = queue;
     setQueue(rest);
@@ -343,12 +347,8 @@ export function App() {
   const pickMedia = async () => {
     const picked = await bridge?.pickMedia();
     if (!picked?.length) return;
-    if (running) {
-      setQueue((q) => [...q, ...picked]);
-    } else {
-      setSource(picked[0]);
-      setQueue((q) => [...q, ...picked.slice(1)]);
-    }
+    if (!running) setSource(picked.shift() ?? null);
+    setQueue((q) => [...q, ...picked]);
   };
 
   const edit = (next: LocalSubProject) => {
@@ -360,15 +360,7 @@ export function App() {
     if (!bridge || !project || blocking.length) return;
     const chosen = await bridge.pickSaveBase(defaultOutputBase(project.source_media ?? source));
     if (!chosen) return;
-    try {
-      const base = outputBaseFromSavePath(chosen);
-      const written = await bridge.exportProject(project, base, formats);
-      setProjectBase(base);
-      setDirty(false);
-      setNotice(t("editor.saved", { n: written.length, files: written.map(baseName).join(", ") }));
-    } catch (err) {
-      setNotice(t("editor.exportFailed", { error: errorMessage(t, String(err)) }));
-    }
+    await saveTo(outputBaseFromSavePath(chosen), "editor.saved");
   };
 
   const openProject = async () => {
