@@ -5,6 +5,7 @@ import {
   Boxes,
   CircleCheck,
   CircleX,
+  ChevronDown,
   Circle,
   Clapperboard,
   Download,
@@ -21,6 +22,7 @@ import {
   Scissors,
   Sparkles,
   Square,
+  TriangleAlert,
   Sun,
   Subtitles,
   Trash2,
@@ -205,6 +207,11 @@ export function App() {
   const fileStartedAt = useRef(0);
   // Files finished since the last manual start: the queue position and the end-of-queue summary.
   const [runLog, setRunLog] = useState<RunResult[]>([]);
+  // Overnight queue control: settings of the running file, "stop after this file", "skip this file".
+  const [runConfig, setRunConfig] = useState<RunConfig | null>(null);
+  const [stopAfter, setStopAfter] = useState(false);
+  const skipCurrent = useRef(false);
+  const cancelMenu = useRef<HTMLDetailsElement>(null);
   const [keptEdits, setKeptEdits] = useState(false);
   // Last-used run settings, read once at launch.
   const [saved] = useState(() => parseRunSettings(safeStorage()?.getItem(RUN_SETTINGS_KEY)));
@@ -374,6 +381,7 @@ export function App() {
   const start = async (src: string | null = source, settings: RunConfig = currentConfig(), auto = false) => {
     if (!bridge || !src) return;
     const config: JobConfig = { ...settings, source: src };
+    setRunConfig(settings);
     dispatch({ type: "start" });
     setMarkers([]);
     setBannersHidden(false);
@@ -425,17 +433,21 @@ export function App() {
   };
 
   // A finished or failed job is logged, shows its result and starts the next queued file;
-  // Cancel stops the queue.
+  // Cancel stops the queue unless it only skipped this file; "stop after this file" holds the rest.
   useEffect(() => {
     const finished = job.status === "completed" || job.status === "failed";
     if (!finished && job.status !== "cancelled") return;
+    const skipped = job.status === "cancelled" && skipCurrent.current;
+    skipCurrent.current = false;
+    const hold = stopAfter;
+    if (hold) setStopAfter(false);
     const project = job.outputs.find((o) => o.endsWith(".localsub.json")) ?? null;
     const log = source
       ? [...runLog, { file: source, status: job.status, asr: job.asrDevice, mt: job.translationDevice, fallback: job.asrFallback ?? job.translationFallback, ms: Date.now() - fileStartedAt.current, project }]
       : runLog;
     setRunLog(log);
-    if (job.status === "completed" && job.project) void takeResult(job.project, job.outputs, !queue.length);
-    if (!finished || !queue.length) {
+    if (job.status === "completed" && job.project) void takeResult(job.project, job.outputs, !queue.length || hold);
+    if (!(finished || skipped) || hold || !queue.length) {
       if (log.length > 1) notifyQueueDone(log);
       return;
     }
@@ -457,6 +469,21 @@ export function App() {
       // the window title already carries the result
     }
   };
+
+  const closeCancelMenu = () => {
+    if (cancelMenu.current) cancelMenu.current.open = false;
+  };
+  const skipThisFile = () => {
+    skipCurrent.current = true;
+    closeCancelMenu();
+    void bridge?.cancelJob();
+  };
+  const cancelAll = () => {
+    closeCancelMenu();
+    void bridge?.cancelJob();
+  };
+  const configText = (c: RunConfig) =>
+    `${c.language === "auto" ? t("config.auto") : t(`lang.${c.language}` as MessageKey)} · ${findChoice(choices, c.model)?.label ?? c.model}${c.translateTo ? ` → ${t(`lang.${c.translateTo}` as MessageKey)}` : ""}`;
 
   const pickMedia = async () => {
     const picked = await bridge?.pickMedia();
@@ -661,15 +688,16 @@ export function App() {
           <div className="queue">
             <p className="queue-title">{t("queue.title", { n: queue.length })}</p>
             <ol className="queue-list">
+              {running && source && runConfig && (
+                <li className="current">
+                  <span title={source}>{baseName(source)}</span>
+                  <span className="queue-config">{t("queue.running")} · {configText(runConfig)}</span>
+                </li>
+              )}
               {queue.map((file, i) => (
                 <li key={`${i}-${file.file}`}>
                   <span title={file.file}>{baseName(file.file)}</span>
-                  <span className="queue-config">
-                    {file.config.language === "auto" ? t("config.auto") : t(`lang.${file.config.language}` as MessageKey)}
-                    {" · "}
-                    {findChoice(choices, file.config.model)?.label ?? file.config.model}
-                    {file.config.translateTo ? ` → ${t(`lang.${file.config.translateTo}` as MessageKey)}` : ""}
-                  </span>
+                  <span className="queue-config">{configText(file.config)}</span>
                   <button type="button" className="icon-btn icon-danger" aria-label={t("queue.remove", { file: baseName(file.file) })} onClick={() => setQueue((q) => q.filter((_, j) => j !== i))}>
                     <X size={14} aria-hidden="true" />
                   </button>
@@ -891,7 +919,7 @@ export function App() {
           {tab === "editor" && (
             <button
               type="button"
-              className="btn btn-secondary"
+              className="btn btn-secondary drawer-toggle"
               aria-expanded={drawerOpen}
               aria-controls="run-drawer"
               title={t("drawer.toggleTitle")}
@@ -903,9 +931,11 @@ export function App() {
           )}
           <div className="jobbar" aria-label={t("job.progress")}>
             {running && source && (
-              <span className="job-file" title={source}>
-                {queueTotal > 1 ? t("queue.position", { n: runLog.length + 1, total: queueTotal, file: baseName(source) }) : baseName(source)}
-                {etaAfterThis !== null && ` · ${t("queue.eta", { eta: formatDuration(etaAfterThis), n: queue.length })}`}
+              <span className="job-meta">
+                {queueTotal > 1 && <span className="job-pos">{t("queue.position", { n: runLog.length + 1, total: queueTotal })}</span>}
+                {etaAfterThis !== null && <span className="job-eta">{t("queue.eta", { eta: formatDuration(etaAfterThis), n: queue.length })}</span>}
+                {stopAfter && <span className="job-hold">{t("queue.holdOn")}</span>}
+                <span className="job-file" title={source}>{baseName(source)}</span>
               </span>
             )}
             <p className="sr-only" aria-live="polite">
@@ -930,7 +960,30 @@ export function App() {
               })}
             </ol>
             )}
-            {running ? (
+            {running && queue.length > 0 ? (
+              <details className="cancel-menu" ref={cancelMenu}>
+                <summary className="btn btn-danger">
+                  <Square size={16} aria-hidden="true" />
+                  {t("job.cancel")}
+                  <ChevronDown size={14} aria-hidden="true" />
+                </summary>
+                <div className="cancel-options">
+                  <button type="button" className="btn btn-secondary" onClick={skipThisFile}>{t("queue.skipFile")}</button>
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    aria-pressed={stopAfter}
+                    onClick={() => {
+                      setStopAfter((on) => !on);
+                      closeCancelMenu();
+                    }}
+                  >
+                    {stopAfter ? t("queue.holdOff") : t("queue.holdAfter")}
+                  </button>
+                  <button type="button" className="btn btn-danger" onClick={cancelAll}>{t("queue.cancelAll", { n: queue.length + 1 })}</button>
+                </div>
+              </details>
+            ) : running ? (
               <button type="button" className="btn btn-danger" onClick={() => void bridge?.cancelJob()}>
                 <Square size={16} aria-hidden="true" />
                 {t("job.cancel")}
@@ -940,9 +993,12 @@ export function App() {
                 {blockReason && <span className="cta-reason" id="cta-reason">{blockReason}</span>}
                 <button
                   type="button"
-                  className="btn btn-cta"
+                  // The file in the editor was just generated: the next step is review/export, so
+                  // running it again steps back. Picking a new file brings the orange CTA back.
+                  className={project && runLog.some((r) => r.file === source) ? "btn btn-secondary" : "btn btn-cta"}
                   onClick={() => {
                     setRunLog([]);
+                    setStopAfter(false);
                     document.title = "LocalSub NPU";
                     // a queue can finish unattended: ask once, from this click, to notify then
                     if (queue.length && "Notification" in window && Notification.permission === "default") void Notification.requestPermission();
@@ -982,8 +1038,12 @@ export function App() {
                       {r.status === "completed" ? <CircleCheck size={14} aria-hidden="true" /> : <CircleX size={14} aria-hidden="true" />}
                       <span className="queue-file" title={r.file}>{baseName(r.file)}</span>
                       <span>{t(`history.state.${r.status === "running" || r.status === "idle" ? "failed" : r.status}` as MessageKey)}</span>
-                      <span className="queue-devices">{[r.asr, r.mt].filter(Boolean).join(" → ") || "—"}</span>
-                      {r.fallback && <span className="hint">{r.fallback}</span>}
+                      <span className="queue-devices">
+                        {[r.asr && t("queue.devAsr", { device: r.asr }), r.mt && t("queue.devMt", { device: r.mt })].filter(Boolean).join(" · ") || "—"}
+                      </span>
+                      {r.fallback && (
+                        <span className="queue-fallback"><TriangleAlert size={14} aria-hidden="true" />{t("queue.fallback", { reason: r.fallback })}</span>
+                      )}
                       {r.project && (
                         <button type="button" className="link" onClick={() => void openProjectFile(r.project as string)}>
                           {t("queue.openFile")}
@@ -1021,10 +1081,12 @@ export function App() {
                       {t("editor.goRun")}
                     </button>
                   )}
-                  <button type="button" className="btn btn-secondary" onClick={openProject} disabled={!bridge || running}>
-                    <FolderOpen size={16} aria-hidden="true" />
-                    {t("media.openProject")}
-                  </button>
+                  {!drawerOpen && (
+                    <button type="button" className="btn btn-secondary" onClick={openProject} disabled={!bridge || running}>
+                      <FolderOpen size={16} aria-hidden="true" />
+                      {t("media.openProject")}
+                    </button>
+                  )}
                 </div>
               </div>
             )}
@@ -1156,10 +1218,13 @@ export function App() {
           )}
         </div>
         <div className="view" role="tabpanel" id="panel-monitor" aria-labelledby="tab-monitor" hidden={tab !== "monitor"}>
+          {queue.length > 0 && (
+            <p className="queue-next" role="status">{t("queue.next", { n: queue.length, files: queue.map((q) => baseName(q.file)).join(", ") })}</p>
+          )}
           <section className="card"><MonitorPanel bridge={bridge} markers={markers} /></section>
         </div>
         <div className="view" role="tabpanel" id="panel-history" aria-labelledby="tab-history" hidden={tab !== "history"}>
-          <section className="card"><HistoryPanel bridge={bridge} refreshKey={historyKey} onOpen={(path) => void openProjectFile(path)} /></section>
+          <section className="card"><HistoryPanel bridge={bridge} refreshKey={historyKey} onOpen={(path) => void openProjectFile(path)} onModels={() => setTab("models")} /></section>
         </div>
         <div className="view" role="tabpanel" id="panel-analysis" aria-labelledby="tab-analysis" hidden={tab !== "analysis"}>
           <section className="card"><AnalysisPanel bridge={bridge} refreshKey={historyKey} active={tab === "analysis"} /></section>

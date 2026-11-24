@@ -104,3 +104,20 @@ let the skill run one detector pass at the end of a session.
 - Switch help folds into a `details` disclosure; thin themed scrollbars, primary caret, tabular
   numbers in tables; light `--bg` `#e9edf2` so white cards separate; `h2` 16 px; the environment chip
   is plain text.
+
+## Third critique (28/40) changes, 0.22.0
+
+- Overnight queue: with files queued, Cancel is a menu (skip this file / stop after this file /
+  stop everything); the top bar keeps position and remaining time in non-shrinking spans and only
+  truncates the file name; the queue list shows the running file with its settings; Performance shows
+  the files still queued.
+- Device truth: the queue summary says "Speech NPU · Translation GPU" and shows a fallback as a
+  warning line with its reason; History shows the reason under the device cell, readable error text
+  with a link to Models for model errors, and an RTF legend ("NĐ" and "chạy chồng" are spelled out).
+- Hierarchy: once the file in the editor was just generated, Generate drops to secondary so Export
+  leads; the empty state's "open project" shows only while the drawer (which has its own) is closed;
+  the drawer toggle sits beside the title so the job bar no longer moves it.
+- Polish: MCP client picker shows its selection (generic card button rule no longer overrides it),
+  load tiles are hairline-separated columns instead of cards in a card, danger button colours are
+  tokens (`--on-danger`, `--danger-solid-hover`), the stepper wraps under 600 px (no horizontal
+  scroll at 390 px), queue remove buttons sit beside their file.

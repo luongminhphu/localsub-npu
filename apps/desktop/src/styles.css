@@ -37,6 +37,8 @@
   --warning-soft: rgba(245, 158, 11, 0.16);
   --danger: #fca5a5;
   --danger-solid: #dc2626;
+  --danger-solid-hover: #b91c1c;
+  --on-danger: #ffffff;
   --danger-soft: rgba(239, 68, 68, 0.14);
   --info: #7dd3fc;
   --info-soft: rgba(56, 189, 248, 0.14);
@@ -285,10 +287,26 @@ table { font-variant-numeric: tabular-nums; }
 .editor-tools .switch { margin: 0; }
 .jump { display: inline-flex; align-items: center; gap: var(--space-2); white-space: nowrap; }
 .jump input { width: 6.5em; font-family: var(--font-mono); }
+/* Position and remaining time never shrink; only the file name gives way. */
+.job-meta { display: flex; align-items: baseline; gap: var(--space-2); min-width: 0; max-width: 520px; font-size: 0.86rem; }
+.job-pos, .job-eta, .job-hold { flex: none; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.job-pos { color: var(--text); font-weight: 600; }
+.job-eta { color: var(--text-muted); }
+.job-hold { color: var(--warning); font-weight: 600; }
 .job-file {
-  max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  font-family: var(--font-mono); font-size: 0.86rem; color: var(--text-muted);
+  min-width: 0; max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-family: var(--font-mono); color: var(--text-faint);
 }
+/* The drawer toggle sits beside the title, so the job bar growing never moves it. */
+.topbar > .drawer-toggle { margin-right: auto; }
+.cancel-menu { position: relative; }
+.cancel-menu > summary { list-style: none; cursor: pointer; display: inline-flex; align-items: center; gap: var(--space-2); }
+.cancel-menu > summary::-webkit-details-marker { display: none; }
+.cancel-options {
+  position: absolute; right: 0; top: calc(100% + 6px); z-index: 20; display: grid; gap: var(--space-2); width: max-content; max-width: 320px;
+  padding: var(--space-2); background: var(--surface); border: 1px solid var(--border-strong); border-radius: var(--radius); box-shadow: var(--shadow);
+}
+.cancel-options .btn { justify-content: flex-start; }
 .cta-reason { max-width: 260px; font-size: 0.86rem; color: var(--text-muted); text-align: right; }
 
 /* ------------------------------------------------------------------ cards */
@@ -314,7 +332,7 @@ table { font-variant-numeric: tabular-nums; }
   color: var(--text-muted); text-align: center; padding: var(--space-5);
 }
 .empty svg { color: var(--text-faint); }
-.empty p { max-width: 42ch; }
+.empty p { width: min(60ch, 100%); text-wrap: pretty; }
 .empty-steps { margin: 0; padding-left: 1.4em; text-align: left; display: grid; gap: var(--space-1); color: var(--text-muted); }
 .empty-steps li::marker { color: var(--primary); font-family: var(--font-mono); }
 .empty-state { color: var(--text-muted); padding: var(--space-5) var(--space-1); }
@@ -322,8 +340,8 @@ table { font-variant-numeric: tabular-nums; }
 /* ------------------------------------------------------------------ buttons */
 button { cursor: pointer; }
 button:disabled { cursor: not-allowed; opacity: 0.5; }
-.btn, .card button:not(.icon-btn):not(.link):not(.nav-item):not(.drop-zone),
-.panel button:not(.icon-btn):not(.link):not(.drop-zone) {
+.btn, .card button:not(.icon-btn):not(.link):not(.nav-item):not(.drop-zone):not(.mcp-clients button),
+.panel button:not(.icon-btn):not(.link):not(.drop-zone):not(.mcp-clients button) {
   display: inline-flex; align-items: center; justify-content: center; gap: var(--space-2);
   min-height: 36px; padding: 0 var(--space-4); border-radius: var(--radius); border: 1px solid transparent;
   background: var(--primary); color: var(--on-primary); font-weight: 600; white-space: nowrap;
@@ -338,8 +356,8 @@ button:disabled { cursor: not-allowed; opacity: 0.5; }
   background: var(--surface-2) !important; color: var(--text) !important; border-color: var(--border) !important;
 }
 .btn-secondary:hover:not(:disabled), .card button.secondary:hover:not(:disabled) { background: var(--surface-3) !important; border-color: var(--border-strong) !important; }
-.btn-danger, .card button.danger { background: var(--danger-solid) !important; color: #fff !important; }
-.btn-danger:hover:not(:disabled), .card button.danger:hover:not(:disabled) { background: #b91c1c !important; }
+.btn-danger, .card button.danger { background: var(--danger-solid) !important; color: var(--on-danger) !important; }
+.btn-danger:hover:not(:disabled), .card button.danger:hover:not(:disabled) { background: var(--danger-solid-hover) !important; }
 .btn-ghost { background: transparent !important; color: var(--primary) !important; }
 .btn-ghost:hover:not(:disabled) { background: var(--primary-soft) !important; }
 .btn-sm { min-height: 30px !important; padding: 0 var(--space-2) !important; font-size: 0.93rem; }
@@ -390,8 +408,10 @@ option:disabled { color: var(--text-faint); }
 .queue { margin-top: var(--space-3); padding-top: var(--space-3); border-top: 1px solid var(--border); }
 .queue-title { font-size: 0.93rem; font-weight: 600; margin-bottom: var(--space-1); }
 .queue-list { margin: 0 0 var(--space-1); padding-left: 22px; }
-.queue-list li { font-size: 0.93rem; }
-.queue-list li > span:first-child { display: inline-block; max-width: calc(100% - 40px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: middle; }
+/* The remove button sits at the row's right edge, beside the file it removes. */
+.queue-list li { position: relative; font-size: 0.93rem; padding: 2px 34px 2px 0; }
+.queue-list li > .icon-btn { position: absolute; right: 0; top: 0; }
+.queue-list li > span:first-child { display: inline-block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: middle; }
 .queue-config { display: block; font-size: 0.86rem; color: var(--text-muted); }
 .chip-group { display: flex; flex-wrap: wrap; gap: var(--space-2); }
 .chip-check { position: relative; cursor: pointer; }
@@ -524,7 +544,9 @@ details.more .hint { margin-top: var(--space-1); }
 .monitor-status .dot.stale { background: var(--series-gpu); }
 .monitor-status.stale { color: var(--warning); }
 .monitor-legend { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--space-3); margin: var(--space-3) 0; }
-.metric-card { border: 1px solid var(--border); border-radius: var(--radius); padding: var(--space-3); background: var(--surface-2); min-width: 0; }
+/* Tiles are columns of the load card, split by hairlines, not cards inside a card. */
+.metric-card { padding: var(--space-1) var(--space-3); border-left: 1px solid var(--border); min-width: 0; }
+.metric-card:first-child { border-left: 0; padding-left: 0; }
 .metric-card.unsupported { opacity: 0.6; }
 .metric-head { display: flex; align-items: center; gap: 6px; font-size: 0.93rem; font-weight: 500; }
 .metric-state { margin-left: auto; font-size: 0.86rem; color: var(--text-muted); }
@@ -577,9 +599,9 @@ details.more .hint { margin-top: var(--space-1); }
 .stage-table th { white-space: nowrap; }
 .mcp-box { margin-top: var(--space-5); border-top: 1px solid var(--border); padding-top: var(--space-4); }
 .mcp-clients { display: flex; flex-wrap: wrap; gap: 6px; margin: var(--space-2) 0 var(--space-1); }
-.card .mcp-clients button { background: var(--surface-2); color: var(--text-muted); border: 1px solid var(--border); font-weight: 500; }
-.card .mcp-clients button:hover:not(:disabled) { background: var(--surface-3); color: var(--text); }
-.card .mcp-clients button.on { background: var(--primary-soft); color: var(--text); border-color: var(--primary); font-weight: 600; }
+.card .mcp-clients button, .panel .mcp-clients button { background: var(--surface-2); color: var(--text-muted); border: 1px solid var(--border); font-weight: 500; }
+.card .mcp-clients button:hover:not(:disabled), .panel .mcp-clients button:hover:not(:disabled) { background: var(--surface-3); color: var(--text); }
+.card .mcp-clients button.on, .panel .mcp-clients button.on { background: var(--primary-soft); color: var(--text); border-color: var(--primary); font-weight: 600; }
 .mcp-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-top: var(--space-3); }
 .mcp-extra { margin-top: var(--space-3); }
 .mcp-extra > strong { display: block; font-size: 0.93rem; }
@@ -651,8 +673,18 @@ code.inline { display: inline; padding: 1px 6px; border-radius: 4px; background:
   .model-row { grid-template-columns: minmax(0, 1fr) auto; }
   .model-size { text-align: left; }
   .jobbar { justify-content: flex-start; }
+  .stepper { flex-wrap: wrap; }
+  .stepper li { min-width: 0; }
+  .job-meta { flex-wrap: wrap; }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; }
   .spin { animation: none; }
 }
+
+/* ------------------------------------------------------------------ queue states */
+.queue-list li.current { color: var(--text); }
+.queue-list li.current .queue-config { color: var(--primary); }
+.queue-fallback { display: inline-flex; align-items: center; gap: 4px; color: var(--warning); font-weight: 500; }
+.sub-num.warn { color: var(--warning); }
+.queue-next { margin: 0 0 var(--space-3); font-size: 0.93rem; color: var(--text-muted); }
