@@ -7,6 +7,7 @@ import threading
 import time
 import uuid
 from collections.abc import Callable, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -611,24 +612,37 @@ def _run_job(
         record.openvino_version, available = runtime_probe()
 
         transition(JobState.EXTRACTING_AUDIO)
-        t = time.perf_counter()
         kwargs = {"runner": ffmpeg_runner} if ffmpeg_runner else {}
-        audio.extract_audio(ffmpeg, source, temp_audio, **kwargs)
-        record.source_duration_ms = audio.wav_duration_ms(temp_audio)
-        samples = audio.load_wav_samples(temp_audio)
-        timed("extract", t)
 
-        transition(JobState.LOADING_MODEL, model_id=request.model_id)
-        load_kwargs = {"factory": pipeline_factory} if pipeline_factory else {}
-        model = whisper.load_model(
-            model_path,
-            request.model_id,
-            settings.device_preference,
-            settings.preferred_devices(),
-            available,
-            cache_dir=settings.model_dir / ".ov-cache",
-            **load_kwargs,
-        )
+        def extract() -> Any:
+            t = time.perf_counter()
+            audio.extract_audio(ffmpeg, source, temp_audio, **kwargs)
+            duration = audio.wav_duration_ms(temp_audio)
+            pcm = audio.load_wav_samples(temp_audio)
+            timed("extract", t)
+            return duration, pcm
+
+        # FFmpeg (CPU, a subprocess) and compiling Whisper from the cache (disk, NPU/GPU) do
+        # not compete, so they run at the same time; the pool waits for FFmpeg even if the
+        # load fails, so the temp WAV is never deleted under it.
+        with ThreadPoolExecutor(max_workers=1, thread_name_prefix="extract") as pool:
+            extracting = pool.submit(extract)
+            transition(JobState.LOADING_MODEL, model_id=request.model_id)
+            load_kwargs = {"factory": pipeline_factory} if pipeline_factory else {}
+            try:
+                model = whisper.load_model(
+                    model_path,
+                    request.model_id,
+                    settings.device_preference,
+                    settings.preferred_devices(),
+                    available,
+                    cache_dir=settings.model_dir / ".ov-cache",
+                    **load_kwargs,
+                )
+            except BaseException:
+                extracting.cancel()
+                raise
+            record.source_duration_ms, samples = extracting.result()
         record.device = model.device
         record.device_attempts = model.attempts
         record.timings_ms["load_model"] = model.load_ms

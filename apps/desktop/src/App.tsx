@@ -1221,7 +1221,7 @@ export function App() {
           {queue.length > 0 && (
             <p className="queue-next" role="status">{t("queue.next", { n: queue.length, files: queue.map((q) => baseName(q.file)).join(", ") })}</p>
           )}
-          <section className="card"><MonitorPanel bridge={bridge} markers={markers} /></section>
+          <section className="card"><MonitorPanel bridge={bridge} markers={markers} active={tab === "monitor"} /></section>
         </div>
         <div className="view" role="tabpanel" id="panel-history" aria-labelledby="tab-history" hidden={tab !== "history"}>
           <section className="card"><HistoryPanel bridge={bridge} refreshKey={historyKey} onOpen={(path) => void openProjectFile(path)} onModels={() => setTab("models")} /></section>

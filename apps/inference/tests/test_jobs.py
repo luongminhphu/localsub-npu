@@ -250,3 +250,60 @@ def test_explicit_japanese_language_token(tmp_path, settings, installed_model):
     assert record.state == JobState.COMPLETED, record.error_message
     assert pipeline.kwargs["language"] == "<|ja|>"
     assert record.outputs[0].name == "Họp giao ban.ja.srt"
+
+
+def test_audio_extraction_runs_while_whisper_loads(tmp_path, settings: Settings, installed_model):
+    import threading
+
+    loading = threading.Event()
+
+    def slow_ffmpeg(cmd, **kwargs):
+        # Sequential code would deadlock here: the model only starts loading after FFmpeg.
+        assert loading.wait(5), "Whisper did not start loading while FFmpeg ran"
+        return fake_ffmpeg(cmd, **kwargs)
+
+    def factory(path, device, props):
+        loading.set()
+        return FakePipeline()
+
+    record = run_job(
+        settings,
+        JobRequest(source=make_source(tmp_path), language="vi"),
+        runtime_probe=probe_npu,
+        pipeline_factory=factory,
+        ffmpeg_runner=slow_ffmpeg,
+    )
+    assert record.state == JobState.COMPLETED, record.error_message
+    assert record.source_duration_ms == 3000 and "extract" in record.timings_ms
+
+
+def test_failed_model_load_waits_for_ffmpeg_before_cleanup(
+    tmp_path, settings: Settings, installed_model
+):
+    import threading
+    import time
+
+    done = threading.Event()
+
+    def slow_ffmpeg(cmd, **kwargs):
+        time.sleep(0.2)
+        result = fake_ffmpeg(cmd, **kwargs)
+        done.set()
+        return result
+
+    def broken(path, device, props):
+        raise RuntimeError("compile failed")
+
+    record = run_job(
+        settings,
+        JobRequest(
+            source=make_source(tmp_path),
+            language="vi",
+        ),
+        runtime_probe=probe_npu,
+        pipeline_factory=broken,
+        ffmpeg_runner=slow_ffmpeg,
+    )
+    assert record.state == JobState.FAILED
+    assert done.is_set(), "FFmpeg must finish before the job cleans up"
+    assert not list((settings.output_dir / ".tmp").glob("*.wav")), "temp audio must be removed"
