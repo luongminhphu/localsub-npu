@@ -22,6 +22,7 @@ import {
   Sun,
   Subtitles,
   Trash2,
+  X,
 } from "lucide-react";
 import { AnalysisPanel } from "./components/AnalysisPanel";
 import { HistoryPanel } from "./components/HistoryPanel";
@@ -68,6 +69,7 @@ import { choicesFrom, deviceSupported, FALLBACK_MODELS, findChoice, languageSupp
 import { getBridge, type WorkerBridge } from "./lib/worker";
 
 const KEEP_AWAKE_KEY = "localsub.keepAwake";
+const AUTO_SAVE_KEY = "localsub.autoSave";
 const THEME_KEY = "localsub.theme";
 type Theme = "system" | "light" | "dark";
 const THEMES: Array<{ id: Theme; icon: ReactNode }> = [
@@ -140,6 +142,7 @@ export function App() {
   const [modelStatus, setModelStatus] = useState<Record<string, string>>({});
   const [choices, setChoices] = useState<ModelChoice[]>(FALLBACK_MODELS);
   const [keepAwake, setKeepAwake] = useState(() => safeStorage()?.getItem(KEEP_AWAKE_KEY) !== "0");
+  const [autoSave, setAutoSave] = useState(() => safeStorage()?.getItem(AUTO_SAVE_KEY) === "1");
   const [theme, setTheme] = useState<Theme>(() => {
     const saved = safeStorage()?.getItem(THEME_KEY);
     return saved === "light" || saved === "dark" ? saved : "system";
@@ -148,6 +151,9 @@ export function App() {
   const [historyKey, setHistoryKey] = useState(0);
   const [bridge, setBridge] = useState<WorkerBridge | null>(null);
   const [source, setSource] = useState<string | null>(null);
+  // Files waiting to run after the current job, each with the settings in place when it starts.
+  const [queue, setQueue] = useState<string[]>([]);
+  const [keptEdits, setKeptEdits] = useState(false);
   const [language, setLanguage] = useState<SpokenLanguage>("auto");
   const [model, setModel] = useState("whisper-small-int8");
   const [device, setDevice] = useState<DevicePreference>("auto");
@@ -162,6 +168,8 @@ export function App() {
   const [job, dispatch] = useReducer(jobReducer, initialJob);
   const [project, setProject] = useState<LocalSubProject | null>(null);
   const [dirty, setDirty] = useState(false);
+  // Where the editor's project was last written (job output, opened file or export), for auto-save.
+  const [projectBase, setProjectBase] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const stopListening = useRef<(() => void) | null>(null);
 
@@ -172,6 +180,10 @@ export function App() {
   useEffect(() => {
     safeStorage()?.setItem(KEEP_AWAKE_KEY, keepAwake ? "1" : "0");
   }, [keepAwake]);
+
+  useEffect(() => {
+    safeStorage()?.setItem(AUTO_SAVE_KEY, autoSave ? "1" : "0");
+  }, [autoSave]);
 
   useEffect(() => {
     const root = document.documentElement;
@@ -207,11 +219,6 @@ export function App() {
   }, [runDiagnostics]);
 
   useEffect(() => {
-    if (job.status === "completed" && job.project) {
-      setProject(job.project);
-      setTab("editor");
-      setDirty(false);
-    }
     if (job.status !== "running") {
       stopListening.current?.();
       stopListening.current = null;
@@ -269,10 +276,10 @@ export function App() {
     (m) => diagnostics && !installed.has(m),
   );
 
-  const start = async () => {
-    if (!bridge || !source) return;
+  const start = async (src: string | null = source) => {
+    if (!bridge || !src) return;
     const config: JobConfig = {
-      source,
+      source: src,
       language,
       task: "transcribe",
       model,
@@ -298,6 +305,52 @@ export function App() {
     }
   };
 
+  /** Show a finished job's subtitles; unsaved edits are auto-saved first, or kept as they are. */
+  const takeResult = async (next: LocalSubProject, outputs: string[]) => {
+    if (dirty && project) {
+      if (!autoSave || !projectBase || !bridge || blocking.length) {
+        setKeptEdits(true); // never replace unsaved edits; the new job's files are already on disk
+        return;
+      }
+      try {
+        const written = await bridge.exportProject(project, projectBase, formats);
+        setNotice(t("editor.autoSaved", { n: written.length, files: written.map(baseName).join(", ") }));
+      } catch (err) {
+        setKeptEdits(true);
+        setNotice(t("editor.exportFailed", { error: errorMessage(t, String(err)) }));
+        return;
+      }
+    }
+    const json = outputs.find((o) => o.endsWith(".localsub.json")) ?? outputs[0];
+    setProject(next);
+    setProjectBase(json ? outputBaseFromSavePath(json) : null);
+    setDirty(false);
+    setKeptEdits(false);
+    if (!queue.length) setTab("editor");
+  };
+
+  // A finished or failed job shows its result and starts the next queued file; Cancel stops the queue.
+  useEffect(() => {
+    if (job.status === "completed" && job.project) void takeResult(job.project, job.outputs);
+    if ((job.status !== "completed" && job.status !== "failed") || !queue.length) return;
+    const [next, ...rest] = queue;
+    setQueue(rest);
+    setSource(next);
+    void start(next);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- once per finished job, with that render's queue and settings
+  }, [job.status]);
+
+  const pickMedia = async () => {
+    const picked = await bridge?.pickMedia();
+    if (!picked?.length) return;
+    if (running) {
+      setQueue((q) => [...q, ...picked]);
+    } else {
+      setSource(picked[0]);
+      setQueue((q) => [...q, ...picked.slice(1)]);
+    }
+  };
+
   const edit = (next: LocalSubProject) => {
     setProject(next);
     setDirty(true);
@@ -308,7 +361,9 @@ export function App() {
     const chosen = await bridge.pickSaveBase(defaultOutputBase(project.source_media ?? source));
     if (!chosen) return;
     try {
-      const written = await bridge.exportProject(project, outputBaseFromSavePath(chosen), formats);
+      const base = outputBaseFromSavePath(chosen);
+      const written = await bridge.exportProject(project, base, formats);
+      setProjectBase(base);
       setDirty(false);
       setNotice(t("editor.saved", { n: written.length, files: written.map(baseName).join(", ") }));
     } catch (err) {
@@ -324,6 +379,7 @@ export function App() {
       const data = await bridge.loadProject(path);
       if (!isProject(data)) throw new Error(t("editor.notProject"));
       setProject(normalizeProject(data));
+      setProjectBase(outputBaseFromSavePath(path));
       setTab("editor");
       setSource(data.source_media ?? source);
       setDirty(false);
@@ -364,12 +420,28 @@ export function App() {
     <aside className="setup" aria-label={t("job.generate")}>
       <section className="card">
         <h2 className="card-title"><span className="step-no" aria-hidden="true">1</span>{t("media.title")}</h2>
-        <button type="button" className="drop-zone" onClick={async () => setSource((await bridge?.pickMedia()) ?? source)} disabled={!bridge || running}>
+        <button type="button" className="drop-zone" onClick={() => void pickMedia()} disabled={!bridge}>
           <FileVideo size={22} aria-hidden="true" />
-          <span className="drop-title">{source ? baseName(source) : t("media.choose")}</span>
+          <span className="drop-title">{running ? t("queue.add") : source ? baseName(source) : t("media.choose")}</span>
           <span className="drop-hint">{t("media.hint")}</span>
         </button>
         {source && <p className="path" title={source}>{source}</p>}
+        {queue.length > 0 && (
+          <div className="queue">
+            <p className="queue-title">{t("queue.title", { n: queue.length })}</p>
+            <ol className="queue-list">
+              {queue.map((file, i) => (
+                <li key={`${i}-${file}`}>
+                  <span title={file}>{baseName(file)}</span>
+                  <button type="button" className="icon-btn icon-danger" aria-label={t("queue.remove", { file: baseName(file) })} onClick={() => setQueue((q) => q.filter((_, j) => j !== i))}>
+                    <X size={14} aria-hidden="true" />
+                  </button>
+                </li>
+              ))}
+            </ol>
+            <p className="hint">{t("queue.hint")}</p>
+          </div>
+        )}
         <button type="button" className="btn btn-secondary btn-block" onClick={openProject} disabled={!bridge || running}>
           <FolderOpen size={16} aria-hidden="true" />
           {t("media.openProject")}
@@ -458,6 +530,12 @@ export function App() {
           <span>{t("config.keepAwake")}</span>
         </label>
         <p className="hint">{t("config.keepAwakeHint")}</p>
+        <label className="switch">
+          <input type="checkbox" role="switch" checked={autoSave} onChange={(e) => setAutoSave(e.target.checked)} />
+          <span className="switch-track" aria-hidden="true" />
+          <span>{t("config.autoSave")}</span>
+        </label>
+        <p className="hint">{t("config.autoSaveHint")}</p>
       </section>
 
       <section className="card">
@@ -582,7 +660,7 @@ export function App() {
                 {t("job.cancel")}
               </button>
             ) : (
-              <button type="button" className="btn btn-cta" onClick={start} disabled={!canStart}>
+              <button type="button" className="btn btn-cta" onClick={() => void start()} disabled={!canStart}>
                 <Play size={16} aria-hidden="true" />
                 {t("job.generate")}
               </button>
@@ -590,13 +668,14 @@ export function App() {
           </div>
         </header>
 
-        {(job.status === "failed" || job.status === "cancelled" || (job.status === "completed" && job.outputs.length > 0) || job.logs.length > 0) && (
+        {(job.status === "failed" || job.status === "cancelled" || (job.status === "completed" && job.outputs.length > 0) || job.logs.length > 0 || keptEdits) && (
           <div className="banner-stack">
             {job.status === "failed" && <p className="banner banner-error" role="alert"><CircleX size={16} aria-hidden="true" />{errorMessage(t, job.error)}</p>}
             {job.status === "cancelled" && <p className="banner banner-warn"><Square size={16} aria-hidden="true" />{t("job.cancelled")}</p>}
             {job.status === "completed" && job.outputs.length > 0 && (
               <p className="banner banner-success" role="status"><CircleCheck size={16} aria-hidden="true" />{t("job.wrote", { files: job.outputs.map(baseName).join(", ") })}</p>
             )}
+            {keptEdits && <p className="banner banner-warn" role="status">{t("queue.keptEdits")}</p>}
             {job.logs.length > 0 && (
               <details className="log">
                 <summary>{t("job.log", { n: job.logs.length })}</summary>

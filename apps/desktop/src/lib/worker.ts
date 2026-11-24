@@ -35,7 +35,8 @@ export interface WorkerBridge {
   preview: boolean;
   diagnostics(): Promise<Diagnostics>;
   models(): Promise<ModelInfo[]>;
-  pickMedia(): Promise<string | null>;
+  /** One or more media files (several are queued); null when cancelled. */
+  pickMedia(): Promise<string[] | null>;
   pickProject(): Promise<string | null>;
   pickSaveBase(defaultPath: string): Promise<string | null>;
   loadProject(path: string): Promise<unknown>;
@@ -75,11 +76,12 @@ async function tauriBridge(): Promise<WorkerBridge> {
     models: async () => JSON.parse(await invoke<string>("list_models")) as ModelInfo[],
     pickMedia: async () => {
       const chosen = await dialog.open({
-        multiple: false,
+        multiple: true,
         directory: false,
         filters: [{ name: "Video or audio", extensions: MEDIA_EXTENSIONS }],
       });
-      return typeof chosen === "string" ? chosen : null;
+      if (chosen === null) return null;
+      return Array.isArray(chosen) ? chosen : [chosen];
     },
     pickProject: async () => {
       const chosen = await dialog.open({
@@ -397,7 +399,7 @@ function previewBridge(): WorkerBridge {
         approx_size_mb: mb,
         path: `data/models/${id}`,
       })),
-    pickMedia: async () => "C:\\Videos\\market-briefing.mp4",
+    pickMedia: async () => ["C:\\Videos\\market-briefing.mp4", "C:\\Videos\\weekly-standup.mp4"],
     pickProject: async () => null,
     pickSaveBase: async (base) => base,
     loadProject: async () => null,

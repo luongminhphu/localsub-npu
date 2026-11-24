@@ -1,3 +1,3 @@
 """LocalSub NPU local inference worker."""
 
-__version__ = "0.15.0"  # keep in sync with pyproject.toml (checked by tests/test_packaging.py)
+__version__ = "0.16.0"  # keep in sync with pyproject.toml (checked by tests/test_packaging.py)

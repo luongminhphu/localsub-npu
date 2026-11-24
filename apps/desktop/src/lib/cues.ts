@@ -273,5 +273,5 @@ export function defaultOutputBase(source: string | null): string {
 
 /** Strip a user-chosen save path back to a base: "talk.vi.srt" -> "talk". */
 export function outputBaseFromSavePath(path: string): string {
-  return path.replace(/(\.localsub)?(\.(en|vi|auto))?\.(srt|vtt|txt|json)$/i, "");
+  return path.replace(/(\.localsub)?(\.(en|vi|ja|ko|zh|auto))?\.(srt|vtt|txt|json)$/i, "");
 }

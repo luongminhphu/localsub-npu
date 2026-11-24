@@ -350,6 +350,11 @@ option:disabled { color: var(--text-faint); }
 .drop-title { color: var(--text); font-weight: 600; overflow-wrap: anywhere; }
 .drop-hint { font-size: 0.86rem; }
 .path { color: var(--text-faint); font-family: var(--font-mono); font-size: 0.86rem; margin-top: var(--space-2); overflow-wrap: anywhere; }
+.queue { margin-top: var(--space-3); padding-top: var(--space-3); border-top: 1px solid var(--border); }
+.queue-title { font-size: 0.93rem; font-weight: 600; margin-bottom: var(--space-1); }
+.queue-list { margin: 0 0 var(--space-1); padding-left: 22px; }
+.queue-list li { font-size: 0.93rem; }
+.queue-list li > span { display: inline-block; max-width: calc(100% - 40px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: middle; }
 .chip-group { display: flex; flex-wrap: wrap; gap: var(--space-2); }
 .chip-check { position: relative; cursor: pointer; }
 .chip-check input { position: absolute; opacity: 0; inset: 0; margin: 0; cursor: pointer; }
