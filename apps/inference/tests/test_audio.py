@@ -58,3 +58,11 @@ def test_load_wav_rejects_wrong_rate(tmp_path: Path) -> None:
     path = write_wav(tmp_path / "a.wav", seconds=0.1, rate=44_100)
     with pytest.raises(LocalSubError):
         audio.load_wav_samples(path)
+
+
+def test_ffmpeg_command_maps_only_first_audio_stream(tmp_path: Path) -> None:
+    # Without -map, ffmpeg picks the audio track with the most channels (e.g. 5.1) and
+    # still demuxes/decodes more than needed; jobs.jsonl shows extract up to 390s.
+    cmd = audio.build_ffmpeg_command("ffmpeg", tmp_path / "a.mkv", tmp_path / "o.wav")
+    assert cmd[cmd.index("-map") + 1] == "0:a:0"
+    assert cmd.index("-map") > cmd.index("-i")  # output option, must follow the input
