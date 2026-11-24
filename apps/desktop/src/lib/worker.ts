@@ -7,6 +7,7 @@ import type {
   ClaudeDesktopConfigFile,
   ClaudeDesktopWriteResult,
   Diagnostics,
+  DiscoverResult,
   DownloadEvent,
   DownloadHandlers,
   JobConfig,
@@ -35,6 +36,8 @@ export interface WorkerBridge {
   preview: boolean;
   diagnostics(): Promise<Diagnostics>;
   models(): Promise<ModelInfo[]>;
+  /** Search Hugging Face for new OpenVINO models and add them to the catalog. */
+  discoverModels(): Promise<DiscoverResult>;
   /** One or more media files (several are queued); null when cancelled. */
   pickMedia(): Promise<string[] | null>;
   pickProject(): Promise<string | null>;
@@ -74,6 +77,7 @@ async function tauriBridge(): Promise<WorkerBridge> {
     preview: false,
     diagnostics: async () => JSON.parse(await invoke<string>("run_diagnostics")) as Diagnostics,
     models: async () => JSON.parse(await invoke<string>("list_models")) as ModelInfo[],
+    discoverModels: async () => JSON.parse(await invoke<string>("discover_models")) as DiscoverResult,
     pickMedia: async () => {
       const chosen = await dialog.open({
         multiple: true,
@@ -255,6 +259,12 @@ const PREVIEW_MODELS: PreviewModel[] = [
   ["qwen3.5-4b-int4", "translation", 3600, "Qwen3.5 4B", { ...EXPERIMENTAL_GPU_CPU, hint: { vi: "Thế hệ mới, cân bằng; GPU/CPU. Thử nghiệm: đo tốc độ trước.", en: "Newer generation, balanced; GPU/CPU. Experimental: benchmark first." } }],
   ["qwen3.5-2b-int4", "translation", 2100, "Qwen3.5 2B", { ...EXPERIMENTAL_GPU_CPU, hint: { vi: "Thế hệ mới, nhẹ; GPU/CPU. Thử nghiệm: đo tốc độ trước.", en: "Newer generation, light; GPU/CPU. Experimental: benchmark first." } }],
 ];
+const PREVIEW_DISCOVERED: PreviewModel = ["qwen3-1.7b-int4", "translation", 1100, "Qwen3-1.7B-int4", {
+  devices: ["GPU", "CPU"],
+  experimental: true,
+  tags: ["discovered"],
+  hint: { vi: "Tự tìm thấy trên Hugging Face (OpenVINO); chưa đo trên máy này.", en: "Found on Hugging Face (OpenVINO); not measured on this machine yet." },
+}];
 
 function previewHistory(): JobHistory {
   const now = Date.now();
@@ -384,6 +394,12 @@ function previewBridge(): WorkerBridge {
       model_dir: "data/models",
       installed_models: [...installed],
     }),
+    discoverModels: async () => {
+      await new Promise((r) => window.setTimeout(r, 600));
+      if (PREVIEW_MODELS.some(([id]) => id === PREVIEW_DISCOVERED[0])) return { added: [], discovered_total: 1 };
+      PREVIEW_MODELS.push(PREVIEW_DISCOVERED);
+      return { added: [PREVIEW_DISCOVERED[0]], discovered_total: 1 };
+    },
     models: async () =>
       PREVIEW_MODELS.map(([id, kind, mb, label, extra]) => ({
         label,

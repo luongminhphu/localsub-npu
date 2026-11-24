@@ -1,5 +1,6 @@
 """Shared model catalog, Qwen3.5 text-only adapter and single-language ASR models."""
 
+import json
 from pathlib import Path
 
 import pytest
@@ -172,3 +173,64 @@ def test_job_with_english_only_model_on_japanese_fails_early(tmp_path, settings)
     )
     assert record.state == JobState.FAILED
     assert record.error_code == ErrorCode.INPUT_UNSUPPORTED
+
+
+HUB = [
+    ("OpenVINO/whisper-small-int8-ov", "automatic-speech-recognition"),  # already built in
+    ("OpenVINO/whisper-large-v2-int8-ov", "automatic-speech-recognition"),
+    ("OpenVINO/whisper-large-v2-fp16-ov", "automatic-speech-recognition"),  # not int4/int8
+    ("OpenVINO/Qwen3-1.7B-int4-ov", "text-generation"),
+    ("OpenVINO/Qwen3-4B-int4-cw-ov", "text-generation"),
+    ("OpenVINO/Qwen2.5-3B-int4-ov", "text-generation"),  # base model, not chat-tuned
+    ("OpenVINO/Qwen2.5-Coder-7B-Instruct-int4-ov", "text-generation"),
+    ("OpenVINO/Qwen3.5-0.8B-int4-ov", "image-text-to-text"),
+    ("OpenVINO/Qwen3-8B-int8-ov", "text-generation"),
+    ("someone/Qwen3-1.7B-int4-ov", "text-generation"),
+]
+
+
+def test_discover_adds_only_runnable_openvino_repos(tmp_path: Path) -> None:
+    sizes: list[str] = []
+
+    def size(repo: str) -> int:
+        sizes.append(repo)
+        return 1_200 * 1_048_576
+
+    result = model_store.discover(tmp_path, lister=lambda: HUB, repo_size=size)
+    assert result["added"] == [
+        "whisper-large-v2-int8",
+        "qwen3-1.7b-int4",
+        "qwen3-4b-int4-cw",
+        "qwen3.5-0.8b-int4",
+    ]
+    assert len(sizes) == 4
+    # A second run finds nothing new and does not touch the Hub sizes again.
+    assert model_store.discover(tmp_path, lister=lambda: HUB, repo_size=size)["added"] == []
+    assert len(sizes) == 4
+
+    specs = {
+        s.id: s
+        for s in catalog.load_discovered(catalog.discovered_path(tmp_path), catalog.BUILTIN_MODELS)
+    }
+    assert specs["whisper-large-v2-int8"].devices == catalog.ALL_DEVICES
+    assert specs["qwen3-1.7b-int4"].devices == ("GPU", "CPU")
+    assert specs["qwen3-4b-int4-cw"].devices == catalog.ALL_DEVICES
+    q = specs["qwen3.5-0.8b-int4"]
+    assert q.runtime == "vlm" and q.kind == "translation" and q.approx_mb == 1200
+    assert all(s.experimental and "discovered" in s.tags for s in specs.values())
+
+
+def test_discovered_file_is_validated_on_load(tmp_path: Path) -> None:
+    path = catalog.discovered_path(tmp_path)
+    asr, llm = "automatic-speech-recognition", "text-generation"
+    rows = [
+        {"repo": "OpenVINO/../../evil-int4-ov", "pipeline_tag": llm},
+        {"repo": "OpenVINO/whisper-small-int8-ov", "pipeline_tag": asr},  # built in already
+        {"pipeline_tag": llm},
+        7,
+        {"repo": "OpenVINO/Qwen3-1.7B-int4-ov", "pipeline_tag": llm, "approx_mb": "x"},
+    ]
+    path.write_text(json.dumps(rows), encoding="utf-8")
+    assert catalog.load_discovered(path, catalog.BUILTIN_MODELS) == ()
+    path.write_text("not json", encoding="utf-8")
+    assert catalog.load_discovered(path, catalog.BUILTIN_MODELS) == ()

@@ -12,6 +12,9 @@ interface Progress {
 
 type Notice = { kind: "success" | "warn" | "error"; text: string } | null;
 
+// The automatic Hugging Face search runs once per app session, not on every visit to the tab.
+let autoSearched = false;
+
 export function ModelManager(props: {
   bridge: WorkerBridge | null;
   selected: string[];
@@ -25,6 +28,8 @@ export function ModelManager(props: {
   const [progress, setProgress] = useState<Progress | null>(null);
   const [notice, setNotice] = useState<Notice>(null);
   const [removing, setRemoving] = useState<string | null>(null);
+  const [searching, setSearching] = useState(false);
+  const [searchNote, setSearchNote] = useState<string | null>(null);
   const stop = useRef<(() => void) | null>(null);
   const failure = useRef<string | null>(null);
 
@@ -38,9 +43,39 @@ export function ModelManager(props: {
     }
   }, [bridge]);
 
+  const discover = useCallback(
+    async (manual: boolean) => {
+      if (!bridge) return;
+      setSearching(true);
+      setSearchNote(null);
+      try {
+        const { added } = await bridge.discoverModels();
+        if (added.length) {
+          setNotice({ kind: "success", text: t("models.found", { count: added.length, models: added.join(", ") }) });
+          await refresh();
+          onChanged();
+        } else if (manual) {
+          setNotice({ kind: "success", text: t("models.noneFound") });
+        }
+      } catch (err) {
+        // Offline is normal for this app: an automatic search only leaves a quiet note.
+        const text = t("models.searchFailed", { error: errorMessage(t, String(err)) });
+        if (manual) setNotice({ kind: "warn", text });
+        else setSearchNote(text);
+      } finally {
+        setSearching(false);
+      }
+    },
+    [bridge, refresh, onChanged, t],
+  );
+
   useEffect(() => {
     void refresh();
-  }, [refresh]);
+    if (bridge && !autoSearched) {
+      autoSearched = true;
+      void discover(false);
+    }
+  }, [refresh, discover, bridge]);
 
   useEffect(() => () => stop.current?.(), []);
 
@@ -121,6 +156,7 @@ export function ModelManager(props: {
                 <div className="model-name">
                   <code>{m.id}</code>
                   {selected.includes(m.id) && <span className="tag">{t("models.inUse")}</span>}
+                  {m.tags?.includes("discovered") && <span className="tag" title={m.hint?.[locale]}>{t("models.new")}</span>}
                   {m.experimental && <span className="tag muted" title={m.hint?.[locale]}>{t("config.experimental")}</span>}
                   {m.languages?.length ? <span className="tag muted">{m.languages.map((l) => l.toUpperCase()).join("/")}</span> : null}
                   {m.devices && m.devices.length < 3 && <span className="tag muted">{m.devices.join("/")}</span>}
@@ -129,7 +165,9 @@ export function ModelManager(props: {
                 <span className="model-size">
                   {m.status === "installed"
                     ? formatBytes(m.size_bytes)
-                    : t("models.approx", { size: formatBytes((m.approx_size_mb ?? 0) * 1_048_576) })}
+                    : m.approx_size_mb
+                      ? t("models.approx", { size: formatBytes(m.approx_size_mb * 1_048_576) })
+                      : "—"}
                 </span>
                 <span className="model-actions">
                   {active ? (
@@ -171,10 +209,21 @@ export function ModelManager(props: {
           <h2>{t("models.title")}</h2>
           <p className="help-text">{t("models.subtitle")}</p>
         </div>
-        <button type="button" className="link" onClick={() => void refresh()} disabled={!bridge || Boolean(progress)}>
-          {t("models.refresh")}
-        </button>
+        <div className="panel-actions">
+          <button type="button" className="link" onClick={() => void discover(true)} disabled={!bridge || searching}>
+            {t("models.search")}
+          </button>
+          <button type="button" className="link" onClick={() => void refresh()} disabled={!bridge || Boolean(progress)}>
+            {t("models.refresh")}
+          </button>
+        </div>
       </div>
+      {searching && (
+        <p className="help-text" role="status">
+          {t("models.searching")}
+        </p>
+      )}
+      {searchNote && <p className="help-text">{searchNote}</p>}
       {progress && (
         <div className="download-progress" role="status" aria-live="polite">
           <div className="progress-label">

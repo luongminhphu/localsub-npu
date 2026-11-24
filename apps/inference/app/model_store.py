@@ -127,6 +127,63 @@ def _hf_repo_size(repo: str) -> int | None:
         return None
 
 
+HubLister = Callable[[], list[tuple[str, str | None]]]
+
+
+def _hf_openvino_models() -> list[tuple[str, str | None]]:
+    try:
+        from huggingface_hub import HfApi
+    except ImportError as exc:
+        raise LocalSubError(
+            ErrorCode.OPENVINO_UNAVAILABLE, 'Install extras: pip install -e ".[openvino]"'
+        ) from exc
+    api = HfApi()
+    try:
+        return [
+            (m.id, m.pipeline_tag)
+            for query in ("whisper", "qwen")
+            for m in api.list_models(author="OpenVINO", search=query, limit=1000)
+        ]
+    except Exception as exc:  # offline or Hub error: report it, keep the current list
+        raise LocalSubError(
+            ErrorCode.DOWNLOAD_FAILED, f"Could not search Hugging Face: {type(exc).__name__}"
+        ) from exc
+
+
+def discover(
+    model_dir: Path,
+    lister: HubLister = _hf_openvino_models,
+    repo_size: RepoSize = _hf_repo_size,
+) -> dict[str, Any]:
+    """Add OpenVINO repos the worker can run but the catalog lacks to ``discovered.json``."""
+    path = model_catalog.discovered_path(model_dir)
+    saved = model_catalog.read_discovered(path)
+    known = {m.repo.lower() for m in model_catalog.BUILTIN_MODELS} | {
+        str(r.get("repo", "")).lower() for r in saved
+    }
+    taken_ids = {m.id for m in model_catalog.MODELS}
+    added: list[dict[str, Any]] = []
+    added_ids: list[str] = []
+    for repo, tag in lister():
+        found = model_catalog.spec_from_hub(repo, tag)
+        if found is None or repo.lower() in known or found.id in taken_ids:
+            continue
+        known.add(repo.lower())
+        taken_ids.add(found.id)
+        size = repo_size(repo) or 0
+        added.append({"repo": repo, "pipeline_tag": tag, "approx_mb": round(size / 1_048_576)})
+        added_ids.append(found.id)
+    if added:
+        model_dir.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(saved + added, ensure_ascii=False, indent=2), encoding="utf-8")
+        os.replace(tmp, path)
+    return {
+        "added": added_ids,
+        "discovered_total": len(saved) + len(added),
+    }
+
+
 @dataclass(frozen=True)
 class DownloadResult:
     model_id: str

@@ -130,6 +130,14 @@ export interface ModelInfo {
   devices?: string[];
   languages?: string[] | null;
   experimental?: boolean;
+  /** "recommended", "english-only", "discovered" (found by `models discover`). */
+  tags?: string[];
+}
+
+/** Result of `models discover`: ids newly added to the catalog. */
+export interface DiscoverResult {
+  added: string[];
+  discovered_total: number;
 }
 
 /** JSON Lines emitted by `models download --events`. */
