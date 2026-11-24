@@ -377,7 +377,13 @@ def _rule_translation(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
         lines = _num(r.get("translation_fallback_lines")) or 0
         if cues and lines / cues >= FALLBACK_LINE_SHARE:
             fallback.append((r, int(lines), int(cues)))
-        if r.get("overlap") is True and not r.get("translation_overlap_lines") and cues:
+        speech = r.get("detected_language") or r.get("language")
+        if (
+            r.get("overlap") is True
+            and not r.get("translation_overlap_lines")
+            and cues
+            and speech != r.get("translate_to")  # nothing to translate, not an idle overlap
+        ):
             idle.append(r)
     if tail:
         findings.append(

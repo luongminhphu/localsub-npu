@@ -91,14 +91,14 @@ def chunked(monkeypatch):
     monkeypatch.setattr(translation, "_config", lambda tokens: object())
 
 
-def run(settings, tmp_path, asr, llm, device="GPU", llm_factory=None, **kw):
+def run(settings, tmp_path, asr, llm, device="GPU", llm_factory=None, language="ja", **kw):
     install_llm(settings)
     events: list[dict] = []
     record = run_job(
         settings,
         JobRequest(
             source=make_source(tmp_path),
-            language="ja",
+            language=language,
             translate_to="vi",
             translation_model="qwen3-0.6b-int4",
             translation_device=device,
@@ -254,24 +254,43 @@ def test_overlap_thread_error_is_raised_as_translation_failure() -> None:
     assert err.value.code == ErrorCode.TRANSLATION_FAILED
 
 
+@pytest.mark.parametrize(
+    ("language", "task", "target"), [("vi", "transcribe", "vi"), ("ja", "translate", "en")]
+)
 def test_nothing_to_translate_when_speech_is_already_target(
-    tmp_path, settings, installed_model, chunked
+    tmp_path, settings, installed_model, chunked, language, task, target
 ) -> None:
     install_llm(settings)
+    loads: list[str] = []
+
+    def factory(path, dev, props):
+        loads.append(dev)
+        return FakeLLM()
+
     record = run_job(
         settings,
         JobRequest(
             source=make_source(tmp_path),
-            language="vi",
-            translate_to="vi",
+            language=language,
+            task=task,
+            translate_to=target,
             translation_model="qwen3-0.6b-int4",
             translation_device="GPU",
             formats=("srt",),
         ),
         runtime_probe=probe_npu,
         pipeline_factory=lambda path, dev, props: StreamingWhisper(delay=0),
-        llm_factory=lambda path, dev, props: FakeLLM(),
+        llm_factory=factory,
         ffmpeg_runner=fake_ffmpeg,
     )
     assert record.state == JobState.COMPLETED, record.error_message
     assert "translation" not in record.timings_ms
+    # Speech language known up front and equal to the target: never load the LLM at all.
+    assert record.overlap is False and f"already in {target}" in record.overlap_reason
+    assert loads == [] and "load_translation_model" not in record.timings_ms
+
+
+def test_auto_language_still_overlaps(tmp_path, settings, installed_model, chunked) -> None:
+    record, _ = run(settings, tmp_path, StreamingWhisper(), TimedFakeLLM(), language="auto")
+    assert record.state == JobState.COMPLETED, record.error_message
+    assert record.overlap is True and record.translation_overlap_lines
