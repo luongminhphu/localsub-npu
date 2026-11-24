@@ -261,7 +261,7 @@ function previewHistory(): JobHistory {
   const iso = (minutesAgo: number) => new Date(now - minutesAgo * 60_000).toISOString();
   const npu = { requested: "auto", resolved: "NPU", fallback_reason: null };
   const jobs: JobHistory["jobs"] = [
-    { job_id: "a1", started_at: iso(12), finished_at: iso(10), state: "completed", source_name: "market-briefing.mp4", language: "auto", detected_language: "en", translate_to: "vi", model_id: "whisper-small-int8", translation_model: "qwen3-8b-int4-cw", device: npu, translation_device: { requested: "auto", resolved: "GPU", fallback_reason: null }, source_duration_ms: 612_000, total_ms: 98_400, real_time_factor: 0.07, total_rtf: 0.161, asr_ms: 42_800, translation_ms: 51_300, cue_count: 142, translation_fallback_lines: 0, overlap: true, translation_after_asr_ms: 9_300, translation_parallel: 8, error_code: null },
+    { job_id: "a1", started_at: iso(12), finished_at: iso(10), state: "completed", source_name: "market-briefing.mp4", project_path: "C:\\Videos\\market-briefing.localsub.json", language: "auto", detected_language: "en", translate_to: "vi", model_id: "whisper-small-int8", translation_model: "qwen3-8b-int4-cw", device: npu, translation_device: { requested: "auto", resolved: "GPU", fallback_reason: null }, source_duration_ms: 612_000, total_ms: 98_400, real_time_factor: 0.07, total_rtf: 0.161, asr_ms: 42_800, translation_ms: 51_300, cue_count: 142, translation_fallback_lines: 0, overlap: true, translation_after_asr_ms: 9_300, translation_parallel: 8, error_code: null },
     { job_id: "a2", started_at: iso(95), finished_at: iso(94), state: "failed", source_name: "interview-ja.mkv", language: "ja", detected_language: null, translate_to: "en", model_id: "whisper-large-v3-turbo-int8", translation_model: "qwen3-8b-int4-cw", device: null, translation_device: null, source_duration_ms: null, total_ms: 1_200, real_time_factor: null, total_rtf: null, asr_ms: null, translation_ms: null, cue_count: null, translation_fallback_lines: null, error_code: "MODEL_INCOMPLETE" },
     { job_id: "a3", started_at: iso(1440), finished_at: iso(1436), state: "completed", source_name: "town-hall.mp4", language: "auto", detected_language: "vi", translate_to: "en", model_id: "whisper-small-int8", translation_model: "qwen3-4b-int4", device: { requested: "auto", resolved: "GPU", fallback_reason: "NPU compile failed" }, translation_device: { requested: "auto", resolved: "GPU", fallback_reason: null }, source_duration_ms: 1_800_000, total_ms: 240_000, real_time_factor: 0.05, total_rtf: 0.133, asr_ms: 90_000, translation_ms: 141_000, translation_parallel: 8, cue_count: 410, translation_fallback_lines: 2, error_code: null },
   ];
@@ -399,10 +399,17 @@ function previewBridge(): WorkerBridge {
         approx_size_mb: mb,
         path: `data/models/${id}`,
       })),
-    pickMedia: async () => ["C:\\Videos\\market-briefing.mp4", "C:\\Videos\\weekly-standup.mp4"],
+    pickMedia: async () => ["C:\\Videos\\market-briefing.mp4", "C:\\Videos\\weekly-standup.mp4", "C:\\Videos\\earnings-call.mp4"],
     pickProject: async () => null,
     pickSaveBase: async (base) => base,
-    loadProject: async () => null,
+    // Any .localsub.json "opens" as the sample project, so reopening from History can be reviewed.
+    loadProject: async (path) => ({
+      schema: "localsub.project/v1",
+      source_media: path.replace(/\.localsub\.json$/, ".mp4"),
+      source_language: "en",
+      target_language: "vi",
+      cues: PREVIEW_CUES.map(([text, vi], i) => ({ start_ms: i * 4200, end_ms: i * 4200 + 3900, text, translation: vi })),
+    }),
     startJob: async (config, handlers) => {
       exitHandler = handlers.onExit;
       const withTranslation = Boolean(config.translateTo);
@@ -439,7 +446,11 @@ function previewBridge(): WorkerBridge {
       steps.push({
         type: "state",
         state: "completed",
-        outputs: ["C:\\Videos\\market-briefing.en.srt"],
+        // Like the real worker: <name>.<lang>.<fmt> per chosen format, plus the project file.
+        outputs: [
+          ...config.formats.filter((f) => f !== "json").map((f) => `${config.source.replace(/\.[^.\\]+$/, "")}.en.${f}`),
+          ...(config.formats.includes("json") ? [`${config.source.replace(/\.[^.\\]+$/, "")}.localsub.json`] : []),
+        ],
         project: {
           schema: "localsub.project/v1",
           source_media: config.source,

@@ -88,16 +88,18 @@ const DEVICES: Array<{ value: DevicePreference; label: string }> = [
   { value: "CPU", label: "CPU" },
 ];
 const TRANSLATION_DEVICES: Array<{ value: TranslationDevice; label: string }> = DEVICES;
-type Tab = "run" | "editor" | "monitor" | "history" | "analysis" | "models";
-const TABS: Tab[] = ["run", "editor", "monitor", "history", "analysis", "models"];
+type Tab = "editor" | "monitor" | "history" | "analysis" | "models";
+const TABS: Tab[] = ["editor", "monitor", "history", "analysis", "models"];
 const TAB_ICONS: Record<Tab, ReactNode> = {
-  run: <Clapperboard size={18} aria-hidden="true" />,
   editor: <Subtitles size={18} aria-hidden="true" />,
   monitor: <Activity size={18} aria-hidden="true" />,
   history: <History size={18} aria-hidden="true" />,
   analysis: <Sparkles size={18} aria-hidden="true" />,
   models: <Boxes size={18} aria-hidden="true" />,
 };
+// shortcut: rows are appended in chunks while scrolling (bounded first render and tab stops),
+// not windowed; switch to a virtualised list if episodes with thousands of cues get slow.
+const ROW_CHUNK = 150;
 const JA_WEAK_MODELS = new Set(["whisper-tiny-int8", "whisper-base-int8", "whisper-small-int8"]);
 const FORMATS: ExportFormat[] = ["srt", "vtt", "txt", "json"];
 const STEPS: WorkerStage[] = [
@@ -128,6 +130,15 @@ interface RunResult {
   asr: string | null;
   mt: string | null;
   fallback: string | null;
+  ms: number;
+  project: string | null; // .localsub.json written by the job, to reopen it from the summary
+}
+
+/** Job settings frozen when a file is queued, so later changes do not retarget it. */
+type RunConfig = Omit<JobConfig, "source">;
+interface QueueItem {
+  file: string;
+  config: RunConfig;
 }
 
 function TimeField(props: { id: string; label: string; invalidText: string; value: number; onCommit: (ms: number) => void }) {
@@ -185,7 +196,10 @@ export function App() {
   const [bridge, setBridge] = useState<WorkerBridge | null>(null);
   const [source, setSource] = useState<string | null>(null);
   // Files waiting to run after the current job, each with the settings in place when it starts.
-  const [queue, setQueue] = useState<string[]>([]);
+  const [queue, setQueue] = useState<QueueItem[]>([]);
+  const [drawerOpen, setDrawerOpen] = useState(true);
+  const [bannersHidden, setBannersHidden] = useState(false);
+  const fileStartedAt = useRef(0);
   // Files finished since the last manual start: the queue position and the end-of-queue summary.
   const [runLog, setRunLog] = useState<RunResult[]>([]);
   const [keptEdits, setKeptEdits] = useState(false);
@@ -195,7 +209,7 @@ export function App() {
   const [translateTo, setTranslateTo] = useState<TargetLanguage>("vi");
   const [translationModel, setTranslationModel] = useState("qwen3-8b-int4-cw");
   const [translationDevice, setTranslationDevice] = useState<TranslationDevice>("auto");
-  const [tab, setTab] = useState<Tab>("run");
+  const [tab, setTab] = useState<Tab>("editor");
   const [formats, setFormats] = useState<ExportFormat[]>(["srt", "json"]);
   const [diagnostics, setDiagnostics] = useState<Diagnostics | null>(null);
   const [diagError, setDiagError] = useState<string | null>(null);
@@ -208,6 +222,9 @@ export function App() {
   const [redoStack, setRedoStack] = useState<LocalSubProject[]>([]);
   const lastEditKey = useRef<string | null>(null);
   const [onlyIssues, setOnlyIssues] = useState(false);
+  const [rowLimit, setRowLimit] = useState(ROW_CHUNK);
+  const moreRowsRef = useRef<HTMLTableRowElement | null>(null);
+  const quickSaveRef = useRef<() => void>(() => undefined);
   const [jumpTo, setJumpTo] = useState("");
   // Where the editor's project was last written (job output, opened file or export), for auto-save.
   const [projectBase, setProjectBase] = useState<string | null>(null);
@@ -269,6 +286,11 @@ export function App() {
   const installed = useMemo(() => new Set(diagnostics?.installed_models ?? []), [diagnostics]);
   const issues = useMemo(() => (project ? validateCues(project.cues) : []), [project]);
   const blocking = issues.filter((i) => i.severity === "error");
+  const issuesByRow = useMemo(() => {
+    const byRow = new Map<number, typeof issues>();
+    for (const issue of issues) byRow.set(issue.index, [...(byRow.get(issue.index) ?? []), issue]);
+    return byRow;
+  }, [issues]);
   const running = job.status === "running";
   // Stage changes of the current job, drawn as markers on the load chart.
   const [markers, setMarkers] = useState<StageMarker[]>([]);
@@ -299,6 +321,8 @@ export function App() {
     return ` ${shown}${eta === null ? "" : ` · ${t("job.eta", { eta: formatDuration(eta) })}`}`;
   };
   const hasTranslation = Boolean(project?.cues.some((c) => c.translation !== null));
+  // Indices of the cues the table shows (all, or only those with issues).
+  const shownRows = (project?.cues ?? []).map((_, i) => i).filter((i) => !onlyIssues || issuesByRow.has(i));
   const whisperChoices = choices.filter((c) => c.kind === "asr");
   const llmChoices = choices.filter((c) => c.kind === "translation");
   const asrChoice = findChoice(choices, model);
@@ -314,23 +338,27 @@ export function App() {
     (m) => diagnostics && !installed.has(m),
   );
 
-  const start = async (src: string | null = source) => {
+  const currentConfig = (): RunConfig => ({
+    language,
+    task: "transcribe",
+    model,
+    device,
+    translateTo,
+    translationModel,
+    translationDevice,
+    formats,
+    keepAwake,
+  });
+
+  /** ``auto``: started by the queue, so the view the owner is on is left alone. */
+  const start = async (src: string | null = source, settings: RunConfig = currentConfig(), auto = false) => {
     if (!bridge || !src) return;
-    const config: JobConfig = {
-      source: src,
-      language,
-      task: "transcribe",
-      model,
-      device,
-      translateTo,
-      translationModel,
-      translationDevice,
-      formats,
-      keepAwake,
-    };
+    const config: JobConfig = { ...settings, source: src };
     dispatch({ type: "start" });
     setMarkers([]);
-    setTab("monitor"); // watch device load while the job runs
+    setBannersHidden(false);
+    fileStartedAt.current = Date.now();
+    if (!auto) setTab("monitor"); // watch device load while a job the owner started runs
     setNotice(null);
     try {
       stopListening.current = await bridge.startJob(config, {
@@ -370,7 +398,10 @@ export function App() {
     showProject(next);
     setProjectBase(json ? outputBaseFromSavePath(json) : null);
     setKeptEdits(false);
-    if (showEditor) setTab("editor");
+    if (showEditor) {
+      setTab("editor");
+      setDrawerOpen(false); // editing starts: give the cue table the full width
+    }
   };
 
   // A finished or failed job is logged, shows its result and starts the next queued file;
@@ -378,24 +409,41 @@ export function App() {
   useEffect(() => {
     const finished = job.status === "completed" || job.status === "failed";
     if (!finished && job.status !== "cancelled") return;
-    if (source) {
-      const result = { file: source, status: job.status, asr: job.asrDevice, mt: job.translationDevice };
-      setRunLog((log) => [...log, { ...result, fallback: job.asrFallback ?? job.translationFallback }]);
-    }
+    const project = job.outputs.find((o) => o.endsWith(".localsub.json")) ?? null;
+    const log = source
+      ? [...runLog, { file: source, status: job.status, asr: job.asrDevice, mt: job.translationDevice, fallback: job.asrFallback ?? job.translationFallback, ms: Date.now() - fileStartedAt.current, project }]
+      : runLog;
+    setRunLog(log);
     if (job.status === "completed" && job.project) void takeResult(job.project, job.outputs, !queue.length);
-    if (!finished || !queue.length) return;
+    if (!finished || !queue.length) {
+      if (log.length > 1) notifyQueueDone(log);
+      return;
+    }
     const [next, ...rest] = queue;
     setQueue(rest);
-    setSource(next);
-    void start(next);
+    setSource(next.file);
+    void start(next.file, next.config, true);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- once per finished job, with that render's queue and settings
   }, [job.status]);
+
+  /** The queue finished: say so in the window title and, if allowed, a Windows notification. */
+  const notifyQueueDone = (log: RunResult[]) => {
+    const ok = log.filter((r) => r.status === "completed").length;
+    const text = t("queue.summary", { ok, total: log.length });
+    document.title = `(${ok}/${log.length}) LocalSub NPU`;
+    try {
+      if ("Notification" in window && Notification.permission === "granted") new Notification("LocalSub NPU", { body: text });
+    } catch {
+      // the window title already carries the result
+    }
+  };
 
   const pickMedia = async () => {
     const picked = await bridge?.pickMedia();
     if (!picked?.length) return;
     if (!running) setSource(picked.shift() ?? null);
-    setQueue((q) => [...q, ...picked]);
+    const config = currentConfig();
+    setQueue((q) => [...q, ...picked.map((file) => ({ file, config }))]);
   };
 
   /** Replace the editor's project (job result or opened file); its undo history starts empty. */
@@ -404,6 +452,7 @@ export function App() {
     setDirty(false);
     setUndoStack([]);
     setRedoStack([]);
+    setRowLimit(ROW_CHUNK);
     lastEditKey.current = null;
   };
 
@@ -442,11 +491,31 @@ export function App() {
     lastEditKey.current = null;
   }, [project, redoStack]);
 
-  // Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y in the editor; inside a text box the browser's own undo runs.
+  // Ctrl+S saves to where the project was last written, or asks where (like the Export button).
+  useEffect(() => {
+    quickSaveRef.current = () => {
+      if (!project || blocking.length || formats.length === 0) return;
+      if (projectBase) void saveTo(projectBase, "editor.saved");
+      else void exportFiles();
+    };
+  });
+
+  // Ctrl+S, and Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y in the editor; inside a text box the browser's own
+  // undo runs.
   useEffect(() => {
     if (tab !== "editor") return;
     const onKey = (e: KeyboardEvent) => {
       if (!(e.ctrlKey || e.metaKey)) return;
+      if (e.key.toLowerCase() === "s") {
+        e.preventDefault();
+        quickSaveRef.current();
+        return;
+      }
+      if (e.key.toLowerCase() === "b") {
+        e.preventDefault();
+        setDrawerOpen((open) => !open);
+        return;
+      }
       const target = e.target as HTMLElement | null;
       if (target?.closest("textarea, input")) return;
       const key = e.key.toLowerCase();
@@ -463,13 +532,28 @@ export function App() {
     const n = Number(jumpTo);
     if (!project || !Number.isInteger(n) || n < 1 || n > project.cues.length) return;
     setOnlyIssues(false);
-    // after the filter is off, the row exists; focus its source text box
+    setRowLimit((limit) => Math.max(limit, n + 20));
+    // after the filter is off and the row is rendered, focus its source text box
     window.setTimeout(() => {
       const box = document.querySelector<HTMLTextAreaElement>(`.cue-table textarea[data-col="src"][data-row="${n - 1}"]`);
       box?.scrollIntoView({ block: "center" });
       box?.focus();
     });
   };
+
+  // Load the next chunk of rows when the "more rows" row comes near the visible area.
+  useEffect(() => {
+    const row = moreRowsRef.current;
+    if (!row || tab !== "editor") return;
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) setRowLimit((limit) => limit + ROW_CHUNK);
+      },
+      { rootMargin: "600px 0px" },
+    );
+    observer.observe(row);
+    return () => observer.disconnect();
+  }, [tab, rowLimit, project, onlyIssues]);
 
   const exportFiles = async () => {
     if (!bridge || !project || blocking.length) return;
@@ -479,15 +563,21 @@ export function App() {
   };
 
   const openProject = async () => {
+    const path = await bridge?.pickProject();
+    if (path) await openProjectFile(path);
+  };
+
+  /** Load a .localsub.json into the editor; unsaved edits are only dropped after a confirm. */
+  const openProjectFile = async (path: string) => {
     if (!bridge) return;
-    const path = await bridge.pickProject();
-    if (!path) return;
+    if (dirty && !(await bridge.confirm(t("editor.discardConfirm"), t("editor.title")))) return;
     try {
       const data = await bridge.loadProject(path);
       if (!isProject(data)) throw new Error(t("editor.notProject"));
       showProject(normalizeProject(data));
       setProjectBase(outputBaseFromSavePath(path));
       setTab("editor");
+      setDrawerOpen(false);
       setSource(data.source_media ?? source);
       setNotice(t("editor.opened", { file: baseName(path) }));
     } catch (err) {
@@ -523,6 +613,10 @@ export function App() {
           : null;
   const canStart = Boolean(bridge) && blockReason === null;
   const queueTotal = runLog.length + 1 + queue.length;
+  // shortcut: assumes queued files take as long as the ones already finished in this run; use
+  // media durations x History RTF if episode lengths vary a lot.
+  const doneRuns = runLog.filter((r) => r.status === "completed");
+  const etaAfterThis = doneRuns.length && queue.length ? (doneRuns.reduce((sum, r) => sum + r.ms, 0) / doneRuns.length) * queue.length : null;
 
   const moveTab = (from: Tab, key: string) => {
     const delta = key === "ArrowDown" || key === "ArrowRight" ? 1 : key === "ArrowUp" || key === "ArrowLeft" ? -1 : 0;
@@ -534,7 +628,7 @@ export function App() {
   };
 
   const setup = (
-    <aside className="setup" aria-label={t("job.generate")}>
+    <div className="setup">
       <section className="card">
         <h2 className="card-title"><span className="step-no" aria-hidden="true">1</span>{t("media.title")}</h2>
         <button type="button" className="drop-zone" onClick={() => void pickMedia()} disabled={!bridge}>
@@ -548,9 +642,15 @@ export function App() {
             <p className="queue-title">{t("queue.title", { n: queue.length })}</p>
             <ol className="queue-list">
               {queue.map((file, i) => (
-                <li key={`${i}-${file}`}>
-                  <span title={file}>{baseName(file)}</span>
-                  <button type="button" className="icon-btn icon-danger" aria-label={t("queue.remove", { file: baseName(file) })} onClick={() => setQueue((q) => q.filter((_, j) => j !== i))}>
+                <li key={`${i}-${file.file}`}>
+                  <span title={file.file}>{baseName(file.file)}</span>
+                  <span className="queue-config">
+                    {file.config.language === "auto" ? t("config.auto") : t(`lang.${file.config.language}` as MessageKey)}
+                    {" · "}
+                    {findChoice(choices, file.config.model)?.label ?? file.config.model}
+                    {file.config.translateTo ? ` → ${t(`lang.${file.config.translateTo}` as MessageKey)}` : ""}
+                  </span>
+                  <button type="button" className="icon-btn icon-danger" aria-label={t("queue.remove", { file: baseName(file.file) })} onClick={() => setQueue((q) => q.filter((_, j) => j !== i))}>
                     <X size={14} aria-hidden="true" />
                   </button>
                 </li>
@@ -687,7 +787,7 @@ export function App() {
           <p className="hint">{t("runtime.checkedAt", { time: formatLocal(diagAt.toISOString(), locale === "vi" ? "vi-VN" : "en-GB"), tz: offsetLabel(diagAt) })}</p>
         )}
       </section>
-    </aside>
+    </div>
   );
 
   return (
@@ -758,10 +858,24 @@ export function App() {
             <h1>{t(`tabs.${tab}` as MessageKey)}</h1>
             <p>{t(`view.${tab}` as MessageKey)}</p>
           </div>
+          {tab === "editor" && (
+            <button
+              type="button"
+              className="btn btn-secondary"
+              aria-expanded={drawerOpen}
+              aria-controls="run-drawer"
+              title={t("drawer.toggleTitle")}
+              onClick={() => setDrawerOpen((open) => !open)}
+            >
+              <Clapperboard size={16} aria-hidden="true" />
+              {drawerOpen ? t("drawer.hide") : t("drawer.show")}
+            </button>
+          )}
           <div className="jobbar" aria-label={t("job.progress")}>
             {running && source && (
               <span className="job-file" title={source}>
                 {queueTotal > 1 ? t("queue.position", { n: runLog.length + 1, total: queueTotal, file: baseName(source) }) : baseName(source)}
+                {etaAfterThis !== null && ` · ${t("queue.eta", { eta: formatDuration(etaAfterThis), n: queue.length })}`}
               </span>
             )}
             <p className="sr-only" aria-live="polite">
@@ -797,6 +911,9 @@ export function App() {
                   className="btn btn-cta"
                   onClick={() => {
                     setRunLog([]);
+                    document.title = "LocalSub NPU";
+                    // a queue can finish unattended: ask once, from this click, to notify then
+                    if (queue.length && "Notification" in window && Notification.permission === "default") void Notification.requestPermission();
                     void start();
                   }}
                   disabled={!canStart}
@@ -810,16 +927,19 @@ export function App() {
           </div>
         </header>
 
-        {(job.status === "failed" || job.status === "cancelled" || (job.status === "completed" && job.outputs.length > 0) || job.logs.length > 0 || keptEdits || (!running && runLog.length > 1)) && (
+        {tab === "editor" && !bannersHidden && (job.status === "failed" || job.status === "cancelled" || (job.status === "completed" && job.outputs.length > 0) || job.logs.length > 0 || keptEdits || (!running && runLog.length > 1)) && (
           <div className="banner-stack">
+            <button type="button" className="icon-btn banner-close" aria-label={t("banner.close")} title={t("banner.close")} onClick={() => setBannersHidden(true)}>
+              <X size={16} aria-hidden="true" />
+            </button>
             {job.status === "failed" && <p className="banner banner-error" role="alert"><CircleX size={16} aria-hidden="true" />{errorMessage(t, job.error)}</p>}
             {job.status === "cancelled" && <p className="banner banner-warn"><Square size={16} aria-hidden="true" />{t("job.cancelled")}</p>}
-            {job.status === "completed" && job.outputs.length > 0 && (
+            {job.status === "completed" && job.outputs.length > 0 && runLog.length <= 1 && (
               <p className="banner banner-success" role="status"><CircleCheck size={16} aria-hidden="true" />{t("job.wrote", { files: job.outputs.map(baseName).join(", ") })}</p>
             )}
             {keptEdits && <p className="banner banner-warn" role="status">{t("queue.keptEdits")}</p>}
             {!running && runLog.length > 1 && (
-              <section className="banner banner-info queue-summary" aria-label={t("queue.summaryTitle")}>
+              <section className="banner banner-info queue-summary" role="status" aria-label={t("queue.summaryTitle")}>
                 <div className="queue-summary-head">
                   <strong>{t("queue.summary", { ok: runLog.filter((r) => r.status === "completed").length, total: runLog.length })}</strong>
                   <button type="button" className="link" onClick={() => setTab("history")}>{t("queue.openHistory")}</button>
@@ -832,6 +952,11 @@ export function App() {
                       <span>{t(`history.state.${r.status === "running" || r.status === "idle" ? "failed" : r.status}` as MessageKey)}</span>
                       <span className="queue-devices">{[r.asr, r.mt].filter(Boolean).join(" → ") || "—"}</span>
                       {r.fallback && <span className="hint">{r.fallback}</span>}
+                      {r.project && (
+                        <button type="button" className="link" onClick={() => void openProjectFile(r.project as string)}>
+                          {t("queue.openFile")}
+                        </button>
+                      )}
                     </li>
                   ))}
                 </ol>
@@ -846,20 +971,19 @@ export function App() {
           </div>
         )}
 
-        <div className="view run-view" role="tabpanel" id="panel-run" aria-labelledby="tab-run" hidden={tab !== "run"}>
-          {setup}
-        </div>
-        <div className="view" role="tabpanel" id="panel-editor" aria-labelledby="tab-editor" hidden={tab !== "editor"}>
+        <div className={`view editor-view${drawerOpen ? " with-drawer" : ""}`} role="tabpanel" id="panel-editor" aria-labelledby="tab-editor" hidden={tab !== "editor"}>
           <section className="card editor-card" aria-label={t("editor.title")}>
             {!project && (
               <div className="empty">
                 <Subtitles size={36} aria-hidden="true" />
                 <p>{t("editor.empty")}</p>
                 <div className="empty-actions">
-                  <button type="button" className="btn btn-primary" onClick={() => setTab("run")}>
-                    <Clapperboard size={16} aria-hidden="true" />
-                    {t("editor.goRun")}
-                  </button>
+                  {!drawerOpen && (
+                    <button type="button" className="btn btn-primary" onClick={() => setDrawerOpen(true)}>
+                      <Clapperboard size={16} aria-hidden="true" />
+                      {t("editor.goRun")}
+                    </button>
+                  )}
                   <button type="button" className="btn btn-secondary" onClick={openProject} disabled={!bridge || running}>
                     <FolderOpen size={16} aria-hidden="true" />
                     {t("media.openProject")}
@@ -871,7 +995,9 @@ export function App() {
               <div className="editor">
                 <div className="card-head">
                   <div>
-                    <h2 className="card-title">{t("editor.title")} {dirty && <span className="badge badge-warn">{t("editor.unsaved")}</span>}</h2>
+                    <h2 className="card-title">
+                      {baseName(project.source_media ?? projectBase) || t("editor.title")} {dirty && <span className="badge badge-warn">{t("editor.unsaved")}</span>}
+                    </h2>
                     <p className="hint">
                       {t("editor.summary", { n: project.cues.length, src: project.source_language ?? "?", dst: project.target_language ? ` → ${project.target_language}` : "" })}
                     </p>
@@ -918,9 +1044,9 @@ export function App() {
                       </tr>
                     </thead>
                     <tbody>
-                      {project.cues.map((cue, i) => {
-                        const rowIssues = issues.filter((x) => x.index === i);
-                        if (onlyIssues && !rowIssues.length) return null;
+                      {shownRows.slice(0, rowLimit).map((i) => {
+                        const cue = project.cues[i];
+                        const rowIssues = issuesByRow.get(i) ?? [];
                         const n = i + 1;
                         const issueIds = rowIssues.map((x) => `issue-${i}-${x.code}`).join(" ") || undefined;
                         return (
@@ -947,18 +1073,44 @@ export function App() {
                           </tr>
                         );
                       })}
+                      {shownRows.length > rowLimit && (
+                        <tr ref={moreRowsRef} className="more-rows">
+                          <td colSpan={hasTranslation ? 5 : 4}>
+                            <button type="button" className="link" onClick={() => setRowLimit((limit) => limit + ROW_CHUNK)}>
+                              {t("editor.moreRows", { n: shownRows.length - rowLimit })}
+                            </button>
+                          </td>
+                        </tr>
+                      )}
                     </tbody>
                   </table>
                 </div>
               </div>
             )}
           </section>
+          {drawerOpen && (
+            <div
+              className="drawer"
+              id="run-drawer"
+              onKeyDown={(e) => {
+                if (e.key === "Escape") setDrawerOpen(false);
+              }}
+            >
+              <div className="drawer-head">
+                <h2>{t("drawer.title")}</h2>
+                <button type="button" className="icon-btn" aria-label={t("drawer.hide")} title={t("drawer.hide")} onClick={() => setDrawerOpen(false)}>
+                  <X size={16} aria-hidden="true" />
+                </button>
+              </div>
+              {setup}
+            </div>
+          )}
         </div>
         <div className="view" role="tabpanel" id="panel-monitor" aria-labelledby="tab-monitor" hidden={tab !== "monitor"}>
           <section className="card"><MonitorPanel bridge={bridge} markers={markers} /></section>
         </div>
         <div className="view" role="tabpanel" id="panel-history" aria-labelledby="tab-history" hidden={tab !== "history"}>
-          <section className="card"><HistoryPanel bridge={bridge} refreshKey={historyKey} /></section>
+          <section className="card"><HistoryPanel bridge={bridge} refreshKey={historyKey} onOpen={(path) => void openProjectFile(path)} /></section>
         </div>
         <div className="view" role="tabpanel" id="panel-analysis" aria-labelledby="tab-analysis" hidden={tab !== "analysis"}>
           <section className="card"><AnalysisPanel bridge={bridge} refreshKey={historyKey} active={tab === "analysis"} /></section>

@@ -162,6 +162,8 @@ export interface HistoryJob {
   finished_at: string | null;
   state: string | null;
   source_name: string | null;
+  /** Local path of the job's .localsub.json, to reopen it in the editor. */
+  project_path?: string | null;
   language: string | null;
   detected_language: string | null;
   translate_to: string | null;

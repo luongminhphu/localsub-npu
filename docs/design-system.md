@@ -81,3 +81,16 @@ releases and checks it against `scripts/engine-checksums.txt`; the binary lands 
 `scripts/bin/` (or `~/.impeccable`). The per-edit design-detector hooks are **not** enabled: turn them
 on per machine with `/impeccable hooks on` (writes `.claude/settings.local.json`), or skip them and
 let the skill run one detector pass at the end of a session.
+
+## Second critique (26/40) changes, 0.18.0
+
+- The Subtitles editor is the home view; Run (Media/queue, Configure, Runtime) is a right-hand drawer
+  of it (top-bar toggle, Ctrl+B, Esc), open while there is nothing to edit and closed when editing
+  starts. The Monitor tab is now "Hiệu năng / Performance" so it no longer clashes with "Tải về".
+- Queue items keep the settings they were queued with; the top bar adds a remaining-time estimate;
+  a finished queue updates the window title, raises a Web Notification when allowed, and its
+  summary (`role=status`) and History rows offer "Mở để sửa". Result banners show only on the
+  editor and can be dismissed.
+- Polish: Runtime key/values in one column, zero-count severity pills without opacity (outlined,
+  muted text), editor header names the file, jump label no longer wraps.
+
