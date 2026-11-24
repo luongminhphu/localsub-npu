@@ -11,6 +11,8 @@ import {
   isProject,
   jobReducer,
   maxCharsFor,
+  maxCpsFor,
+  readingSpeed,
   mergeWithNext,
   outputBaseFromSavePath,
   parseWorkerLine,
@@ -44,9 +46,19 @@ describe("cue editing", () => {
 
   it("warns on long lines without blocking", () => {
     const long = updateCue(project, 0, { text: "x".repeat(90) });
-    expect(validateCues(long.cues)).toEqual([
+    expect(validateCues(long.cues).filter((i) => i.code === "too_long")).toEqual([
       expect.objectContaining({ severity: "warning", index: 0 }),
     ]);
+  });
+
+  it("warns when a cue reads faster than its script allows", () => {
+    // 2 s: 34 Latin characters is the limit (17/s); 35 is too fast. Chinese allows 9/s.
+    const ok = updateCue(project, 0, { text: "a".repeat(34) });
+    expect(validateCues(ok.cues).some((i) => i.code === "too_fast")).toBe(false);
+    const fast = updateCue(project, 0, { text: "a".repeat(35) });
+    expect(validateCues(fast.cues)).toContainEqual(expect.objectContaining({ code: "too_fast", limit: 17, severity: "warning" }));
+    const zh = updateCue(project, 0, { text: "谢".repeat(19) });
+    expect(validateCues(zh.cues)).toContainEqual(expect.objectContaining({ code: "too_fast", limit: 9 }));
   });
 
   it("splits, merges and deletes immutably", () => {
@@ -159,6 +171,12 @@ describe("Japanese cue limits", () => {
     expect(maxCharsFor("決算")).toBe(MAX_CUE_CHARS_CJK);
     expect(maxCharsFor("今天的会议我们主要讨论预算，谢谢大家")).toBe(MAX_CUE_CHARS_CJK); // Chinese (Han, no kana)
     expect(maxCharsFor("Hello")).toBe(MAX_CUE_CHARS);
+    expect(maxCpsFor("Hello there")).toBe(17);
+    expect(maxCpsFor("谢谢大家")).toBe(9);
+    expect(maxCpsFor("ありがとう")).toBe(7);
+    expect(maxCpsFor("감사합니다")).toBe(12);
+    expect(readingSpeed("ab cd", 2000)).toBe(2);
+    expect(readingSpeed("abc", 0)).toBeNull();
     expect(isHangul("오늘 회의를 시작하겠습니다")).toBe(true);
     expect(isCjk("오늘 회의를 시작하겠습니다")).toBe(false);
     expect(maxCharsFor("오늘 회의를 시작하겠습니다")).toBe(MAX_CUE_CHARS_KO);
@@ -171,7 +189,7 @@ describe("Japanese cue limits", () => {
       { start_ms: 0, end_ms: 1000, text: ja, translation: "Hello" },
       { start_ms: 1000, end_ms: 2000, text: latin, translation: null },
     ]);
-    expect(issues).toEqual([
+    expect(issues.filter((i) => i.code === "too_long")).toEqual([
       { index: 0, severity: "warning", code: "too_long", limit: 32, message: "Longer than 32 characters" },
     ]);
   });

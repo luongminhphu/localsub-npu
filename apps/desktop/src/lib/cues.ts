@@ -25,11 +25,31 @@ export function maxCharsFor(text: string): number {
   return isHangul(text) ? MAX_CUE_CHARS_KO : MAX_CUE_CHARS;
 }
 
+// Warning thresholds in characters per second (spaces not counted). Chinese and Japanese match the
+// worker's reading-speed estimates (110 / 150 ms per character); Latin and Hangul follow common
+// subtitle guides.
+const MAX_CPS_LATIN = 17;
+const MAX_CPS_HANGUL = 12;
+const MAX_CPS_CHINESE = 9;
+const MAX_CPS_JAPANESE = 7;
+const KANA = /[\u3040-\u30ff\u31f0-\u31ff\uff66-\uff9f]/;
+
+export function maxCpsFor(text: string): number {
+  if (isCjk(text)) return KANA.test(text) ? MAX_CPS_JAPANESE : MAX_CPS_CHINESE;
+  return isHangul(text) ? MAX_CPS_HANGUL : MAX_CPS_LATIN;
+}
+
+/** Characters per second a viewer must read; null when the cue has no duration. */
+export function readingSpeed(text: string, durationMs: number): number | null {
+  if (durationMs <= 0) return null;
+  return text.replace(/\s/g, "").length / (durationMs / 1000);
+}
+
 export interface CueIssue {
   index: number;
   message: string;
   severity: "error" | "warning";
-  code: "timing" | "empty" | "overlap" | "too_long";
+  code: "timing" | "empty" | "overlap" | "too_long" | "too_fast";
   limit?: number;
 }
 
@@ -59,6 +79,11 @@ export function validateCues(cues: ProjectCue[]): CueIssue[] {
         });
         break;
       }
+    }
+    const cps = readingSpeed(cue.text, cue.end_ms - cue.start_ms);
+    const maxCps = maxCpsFor(cue.text);
+    if (cps !== null && cps > maxCps) {
+      issues.push({ index, severity: "warning", code: "too_fast", limit: maxCps, message: `Faster than ${maxCps} characters per second` });
     }
   });
   return issues;
