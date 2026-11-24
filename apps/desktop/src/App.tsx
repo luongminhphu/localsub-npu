@@ -71,6 +71,7 @@ import type {
   TargetLanguage,
   WorkerStage,
 } from "./lib/types";
+import { DEFAULT_RUN_SETTINGS, parseRunSettings, RUN_SETTINGS_KEY, type SavedRunSettings } from "./lib/settings";
 import { choicesFrom, deviceSupported, FALLBACK_MODELS, findChoice, languageSupported, type ModelChoice } from "./lib/catalog";
 import { getBridge, type WorkerBridge } from "./lib/worker";
 
@@ -205,14 +206,16 @@ export function App() {
   // Files finished since the last manual start: the queue position and the end-of-queue summary.
   const [runLog, setRunLog] = useState<RunResult[]>([]);
   const [keptEdits, setKeptEdits] = useState(false);
-  const [language, setLanguage] = useState<SpokenLanguage>("auto");
-  const [model, setModel] = useState("whisper-small-int8");
-  const [device, setDevice] = useState<DevicePreference>("auto");
-  const [translateTo, setTranslateTo] = useState<TargetLanguage>("vi");
-  const [translationModel, setTranslationModel] = useState("qwen3-8b-int4-cw");
-  const [translationDevice, setTranslationDevice] = useState<TranslationDevice>("auto");
+  // Last-used run settings, read once at launch.
+  const [saved] = useState(() => parseRunSettings(safeStorage()?.getItem(RUN_SETTINGS_KEY)));
+  const [language, setLanguage] = useState<SpokenLanguage>(saved.language);
+  const [model, setModel] = useState(saved.model);
+  const [device, setDevice] = useState<DevicePreference>(saved.device);
+  const [translateTo, setTranslateTo] = useState<TargetLanguage>(saved.translateTo);
+  const [translationModel, setTranslationModel] = useState(saved.translationModel);
+  const [translationDevice, setTranslationDevice] = useState<TranslationDevice>(saved.translationDevice);
   const [tab, setTab] = useState<Tab>("editor");
-  const [formats, setFormats] = useState<ExportFormat[]>(["srt", "json"]);
+  const [formats, setFormats] = useState<ExportFormat[]>(saved.formats);
   const [diagnostics, setDiagnostics] = useState<Diagnostics | null>(null);
   const [diagError, setDiagError] = useState<string | null>(null);
   const [diagBusy, setDiagBusy] = useState(false);
@@ -243,6 +246,11 @@ export function App() {
   }, [keepAwake, autoSave]);
 
   useEffect(() => {
+    const settings: SavedRunSettings = { language, model, device, translateTo, translationModel, translationDevice, formats };
+    safeStorage()?.setItem(RUN_SETTINGS_KEY, JSON.stringify(settings));
+  }, [language, model, device, translateTo, translationModel, translationDevice, formats]);
+
+  useEffect(() => {
     const root = document.documentElement;
     if (theme === "system") root.removeAttribute("data-theme");
     else root.setAttribute("data-theme", theme);
@@ -263,7 +271,13 @@ export function App() {
       setDiagAt(new Date());
       const list = await bridge.models().catch(() => []);
       setModelStatus(Object.fromEntries(list.map((m) => [m.id, m.status])));
-      if (list.length) setChoices(choicesFrom(list));
+      if (list.length) {
+        setChoices(choicesFrom(list));
+        // A remembered model that is no longer in the catalog falls back to the default.
+        const known = (kind: string, id: string) => list.some((m) => m.kind === kind && m.id === id);
+        setModel((id) => (known("asr", id) ? id : DEFAULT_RUN_SETTINGS.model));
+        setTranslationModel((id) => (known("translation", id) ? id : DEFAULT_RUN_SETTINGS.translationModel));
+      }
     } catch (err) {
       setDiagError(String(err));
     } finally {
@@ -325,8 +339,12 @@ export function App() {
   const hasTranslation = Boolean(project?.cues.some((c) => c.translation !== null));
   // Indices of the cues the table shows (all, or only those with issues).
   const shownRows = (project?.cues ?? []).map((_, i) => i).filter((i) => !onlyIssues || issuesByRow.has(i));
-  const whisperChoices = choices.filter((c) => c.kind === "asr");
-  const llmChoices = choices.filter((c) => c.kind === "translation");
+  // Pickers list downloaded models only (plus the current pick, so the select stays truthful);
+  // before diagnostics answer nothing is known, so everything is listed.
+  const listed = (c: ModelChoice) => !diagnostics || installed.has(c.id) || c.id === model || c.id === translationModel;
+  const whisperChoices = choices.filter((c) => c.kind === "asr" && listed(c));
+  const llmChoices = choices.filter((c) => c.kind === "translation" && listed(c));
+  const hiddenModels = choices.length - choices.filter(listed).length;
   const asrChoice = findChoice(choices, model);
   const llmChoice = findChoice(choices, translationModel);
   const asrLanguageOk = languageSupported(asrChoice, language);
@@ -705,6 +723,12 @@ export function App() {
             </select>
           </div>
           <p className="hint">{hintFor(asrChoice, model)} {t("config.autoOrder")}</p>
+          {hiddenModels > 0 && (
+            <p className="hint">
+              {t("config.moreModels", { count: hiddenModels })}{" "}
+              <button type="button" className="link" onClick={() => setTab("models")}>{t("config.openModels")}</button>
+            </p>
+          )}
           {!asrLanguageOk && (
             <p className="msg msg-error" role="alert">{t("config.languageOnly", { model: asrChoice?.label ?? model, langs: (asrChoice?.languages ?? []).map((l) => t(`lang.${l}` as MessageKey)).join(", ") })}</p>
           )}
