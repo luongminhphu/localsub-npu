@@ -1,6 +1,7 @@
 export type DevicePreference = "auto" | "NPU" | "GPU" | "CPU";
 export type TranslationDevice = DevicePreference;
-export type SpokenLanguage = "auto" | "en" | "ja" | "ko" | "vi" | "zh";
+export const SPOKEN_LANGUAGES = ["auto", "en", "ja", "ko", "vi", "zh"] as const;
+export type SpokenLanguage = (typeof SPOKEN_LANGUAGES)[number];
 export type TargetLanguage = "" | "en" | "vi";
 export type ExportFormat = "srt" | "vtt" | "txt" | "json";
 export type WorkerStage =

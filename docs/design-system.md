@@ -50,9 +50,16 @@ Root font size is 14 px (dense desktop tool); the smallest rendered text is 12 p
 - **Top bar**: view title and one-line purpose, job stepper (icons for pending/running/done/failed,
   progress and ETA), the single orange CTA or Cancel. Result, error and log banners sit under it so
   progress is visible from every view.
-- **Subtitles view**: setup cards (Media, Configure, Runtime) beside the cue editor; the editor
-  stacks start/end times in one column, grows text boxes to their content (`field-sizing: content`,
-  WebView2/Chromium) and uses labelled icon buttons for split/merge/delete.
+- **Run view** (0.17.0): Media (with the queue), Configure and Runtime cards in an auto-fit grid. A
+  disabled Generate button shows its first unmet condition beside it; the top bar shows `File n/N`
+  while a queue runs, and a finished queue gets a per-file summary banner.
+- **Subtitles view**: the cue editor at full width with Undo/Redo (snapshot stack, Ctrl+Z / Ctrl+Y;
+  one step per typing run), an issues-only filter, a cue jump box and Alt+↑/↓ between cues. Start/end
+  times stack in one column, text boxes grow to their content (`field-sizing: content`), and
+  split/merge/delete are labelled icon buttons that announce how to undo them.
+- Changes from the first Impeccable critique (24/40): light `--bg` is neutral `#f3f5f8`, light
+  `--success`/`--warning` darkened to `#166534`/`#854d0e` so status pills reach 5.7–6.3:1, and analysis
+  findings dropped the 4 px side accent (severity stays on the labelled pill).
 
 ## Pre-delivery checklist (from the skill)
 
@@ -63,3 +70,14 @@ Root font size is 14 px (dense desktop tool); the smallest rendered text is 12 p
 - [x] Contrast ≥ 4.5:1 in light and dark; status never shown by colour alone (icon or text too)
 - [x] `prefers-reduced-motion` disables transitions and spinners
 - [x] No horizontal page scroll at 560, 860 and 1280 px wide
+
+## Impeccable skill
+
+`.claude/skills/impeccable` is [Impeccable](https://impeccable.style) (pbakaus/impeccable, tag
+`skill-v4.8.2`, Apache-2.0; see its `LICENSE` and `NOTICE.md`), copied from the repo's `.claude/skills`
+build. In Claude Code run `/impeccable` (for example `/impeccable audit apps/desktop/src/App.tsx` or
+`/impeccable polish`). On first use its launcher downloads the native engine from the project's GitHub
+releases and checks it against `scripts/engine-checksums.txt`; the binary lands in the gitignored
+`scripts/bin/` (or `~/.impeccable`). The per-edit design-detector hooks are **not** enabled: turn them
+on per machine with `/impeccable hooks on` (writes `.claude/settings.local.json`), or skip them and
+let the skill run one detector pass at the end of a session.

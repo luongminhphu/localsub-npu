@@ -74,6 +74,8 @@ describe("cue editing", () => {
     expect(defaultOutputBase("/home/a.b/clip")).toBe("/home/a.b/clip");
     expect(outputBaseFromSavePath("C:\\v\\talk.vi.srt")).toBe("C:\\v\\talk");
     expect(outputBaseFromSavePath("/x/talk.localsub.json")).toBe("/x/talk");
+    expect(outputBaseFromSavePath("C:\\v\\talk.zh.srt")).toBe("C:\\v\\talk");
+    expect(outputBaseFromSavePath("C:\\v\\talk.ko.vtt")).toBe("C:\\v\\talk");
     expect(outputBaseFromSavePath("/x/talk.srt")).toBe("/x/talk");
   });
 });

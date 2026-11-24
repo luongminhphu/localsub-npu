@@ -44,3 +44,7 @@ Thumbs.db
 apps/inference/dist/
 apps/inference/build/
 apps/inference/.venv-build/
+
+# Impeccable skill: per-machine engine binary and local hook consent
+.claude/skills/impeccable/scripts/bin/
+.impeccable/config.local.json
