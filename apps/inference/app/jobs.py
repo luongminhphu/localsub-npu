@@ -62,6 +62,8 @@ class JobRecord:
     translation_fallback_lines: int | None = None
     # Why those lines stayed untranslated: missing / placeholder / loop / no_letters / too_long.
     translation_fallback_reasons: dict[str, int] | None = None
+    # Japanese moan/gasp lines transliterated without the LLM (never counted as fallback).
+    translation_interjection_lines: int | None = None
     translation_parallel: int | None = None  # batches per generate() call after tuning
     power: dict[str, Any] | None = None  # keep-awake / throttling state applied for the job
     overlap: bool | None = None  # translation ran while Whisper was still transcribing
@@ -266,6 +268,7 @@ def _join(a: translation.TranslationResult, b: translation.TranslationResult):
         parallel=b.parallel if b.parallel is not None else a.parallel,
         tuning=(*a.tuning, *b.tuning),
         fallback_reasons=tuple(sorted(reasons.items())),
+        interjection_lines=a.interjection_lines + b.interjection_lines,
     )
 
 
@@ -806,6 +809,9 @@ def _run_job(
             for key, n in (*(head.fallback_reasons if head else ()), *tail.fallback_reasons):
                 reasons[key] = reasons.get(key, 0) + n
             record.translation_fallback_reasons = reasons
+            record.translation_interjection_lines = (
+                head.interjection_lines if head else 0
+            ) + tail.interjection_lines
             record.timings_ms["translation"] = (head.inference_ms if head else 0) + (
                 tail.inference_ms
             )

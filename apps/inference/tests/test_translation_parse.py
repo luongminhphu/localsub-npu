@@ -75,9 +75,9 @@ def test_parse_numbered_keeps_existing_formats() -> None:
 def test_markdown_numbered_batch_is_not_a_fallback() -> None:
     llm = ScriptedLLM(lambda lines: "\n".join(f"**{i}.** [en] {t}" for i, t in enumerate(lines, 1)))
     result = translation.translate_lines(
-        make_translator(llm), ["あっ", "待って", "はい"], "ja", "en", parallel=1
+        make_translator(llm), ["ねえ", "待って", "はい"], "ja", "en", parallel=1
     )
-    assert list(result.lines) == ["[en] あっ", "[en] 待って", "[en] はい"]
+    assert list(result.lines) == ["[en] ねえ", "[en] 待って", "[en] はい"]
     assert result.fallback_lines == 0
     assert len(llm.prompts) == 1  # no single-line retries
 
@@ -90,9 +90,9 @@ def test_unnumbered_single_line_retry_is_kept() -> None:
 
     llm = ScriptedLLM(reply)
     result = translation.translate_lines(
-        make_translator(llm), ["あっ", "待って", "はい"], "ja", "en", parallel=1
+        make_translator(llm), ["ねえ", "待って", "はい"], "ja", "en", parallel=1
     )
-    assert list(result.lines) == ["[en] あっ", "[en] 待って", "[en] はい"]
+    assert list(result.lines) == ["[en] ねえ", "[en] 待って", "[en] はい"]
     assert result.fallback_lines == 0
 
 
