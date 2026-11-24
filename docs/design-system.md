@@ -63,3 +63,14 @@ Root font size is 14 px (dense desktop tool); the smallest rendered text is 12 p
 - [x] Contrast ≥ 4.5:1 in light and dark; status never shown by colour alone (icon or text too)
 - [x] `prefers-reduced-motion` disables transitions and spinners
 - [x] No horizontal page scroll at 560, 860 and 1280 px wide
+
+## Impeccable skill
+
+`.claude/skills/impeccable` is [Impeccable](https://impeccable.style) (pbakaus/impeccable, tag
+`skill-v4.8.2`, Apache-2.0; see its `LICENSE` and `NOTICE.md`), copied from the repo's `.claude/skills`
+build. In Claude Code run `/impeccable` (for example `/impeccable audit apps/desktop/src/App.tsx` or
+`/impeccable polish`). On first use its launcher downloads the native engine from the project's GitHub
+releases and checks it against `scripts/engine-checksums.txt`; the binary lands in the gitignored
+`scripts/bin/` (or `~/.impeccable`). The per-edit design-detector hooks are **not** enabled: turn them
+on per machine with `/impeccable hooks on` (writes `.claude/settings.local.json`), or skip them and
+let the skill run one detector pass at the end of a session.
