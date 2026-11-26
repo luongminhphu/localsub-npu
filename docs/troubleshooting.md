@@ -62,6 +62,10 @@ Expected: OpenVINO compiles the model for the NPU on first use. Later runs reuse
 
 A `localsub-worker.exe` from the install folder is still running, usually started as an MCP
 server by Claude Desktop, Claude Code, VS Code or Perplexity, so its DLLs are locked. Installers
-built with `windows/hooks.nsh` stop those processes before copying files. With an older
-installer, do not press Ignore: quit the AI app (Claude Desktop: system tray → Quit) or run
-`Get-Process localsub-worker | Stop-Process -Force` in PowerShell, then press Retry.
+built with `windows/hooks.nsh` stop every program running from `worker\` before copying files,
+and since 0.22.4 keep stopping it for up to ~10 s, because an AI app may start its MCP server
+again right away (the install log lists each process stopped). If it still fails, something
+else holds the file (an AI app that restarts the server immediately, antivirus scanning it): do
+not press Ignore. Quit the AI apps (Claude Desktop: system tray → Quit; close Claude Code, VS Code,
+Perplexity), run `Get-Process localsub-worker | Stop-Process -Force` in PowerShell, then press
+Retry. If Ignore was pressed, run the installer again once everything is closed.

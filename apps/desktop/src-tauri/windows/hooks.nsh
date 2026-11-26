@@ -10,8 +10,12 @@
 !macro LOCALSUB_STOP_WORKERS
   DetailPrint "Stopping LocalSub worker processes in $INSTDIR"
   ; Win32_Process (CIM) gives ExecutablePath even from this 32-bit installer, where
-  ; Get-Process cannot read the path of a 64-bit process.
-  nsExec::ExecToLog `"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "$$dir = [IO.Path]::GetFullPath('$INSTDIR\worker\'); Get-CimInstance Win32_Process | Where-Object { $$_.Name -eq 'localsub-worker.exe' -and $$_.ExecutablePath -and $$_.ExecutablePath.StartsWith($$dir, [StringComparison]::OrdinalIgnoreCase) } | ForEach-Object { Stop-Process -Id $$_.ProcessId -Force -ErrorAction SilentlyContinue }"`
+  ; Get-Process cannot read the path of a 64-bit process. Any program under worker\ counts
+  ; (the worker, an MCP HTTP server, a tool it started), not only localsub-worker.exe.
+  ; An AI app can start its MCP server again right after it is stopped, which left
+  ; VCRUNTIME140.dll locked, so keep checking for up to ~10 s and go on once the folder has
+  ; been free for three checks in a row (1.5 s). The log lists every process stopped.
+  nsExec::ExecToLog `"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "$$dir = [IO.Path]::GetFullPath('$INSTDIR\worker\'); $$free = 0; for ($$i = 0; $$i -lt 20 -and $$free -lt 3; $$i++) { $$found = @(Get-CimInstance Win32_Process | Where-Object { $$_.ExecutablePath -and $$_.ExecutablePath.StartsWith($$dir, [StringComparison]::OrdinalIgnoreCase) }); if ($$found.Count) { $$free = 0; $$found | ForEach-Object { Write-Output ('Stopping ' + $$_.Name + ' (pid ' + $$_.ProcessId + ')'); Stop-Process -Id $$_.ProcessId -Force -ErrorAction SilentlyContinue } } else { $$free++ }; Start-Sleep -Milliseconds 500 }"`
   Pop $0
   ; Give Windows a moment to release the file handles.
   Sleep 1000
