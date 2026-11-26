@@ -130,3 +130,47 @@ def test_explicit_gpu_does_not_fall_back(
     assert "choose Auto or CPU" in record.error_message
     assert devices == ["GPU"]
     assert record.translation_recoveries[0]["ok"] is False
+
+
+ONEDNN_FAIL = (
+    "Exception from src\\inference\\src\\cpp\\infer_request.cpp:224: Exception from "
+    "src\\plugins\\intel_gpu\\src\\graph\\impls\\onednn\\primitive_onednn_base.h:559: "
+    "could not execute a primitive"
+)
+
+
+def test_gpu_error_that_survives_back_off_hands_over_to_cpu() -> None:
+    # Not a known driver-death marker, so the GPU is retried with fewer batches first; when
+    # that still fails the translator is lost (CPU next) instead of failing the whole job.
+    assert not translation.is_device_fatal(RuntimeError(ONEDNN_FAIL))
+    llm = DyingLLM(ok_calls=1, message=ONEDNN_FAIL)
+    lines = [f"line {i}" for i in range(80)]
+    with pytest.raises(translation.TranslatorLost) as err:
+        translation.translate_lines(_translator(llm), lines, "en", "vi", parallel=1)
+    assert err.value.device == "GPU"
+    assert len(err.value.partial.lines) == translation.DEFAULT_BATCH_SIZE
+    assert "could not execute a primitive" in err.value.message
+
+
+def test_cpu_error_still_fails_plainly() -> None:
+    llm = DyingLLM(ok_calls=0, message=ONEDNN_FAIL)
+    with pytest.raises(LocalSubError) as err:
+        translation.translate_lines(_translator(llm, "CPU"), ["a", "b"], "en", "vi", parallel=1)
+    assert not isinstance(err.value, translation.TranslatorLost)
+
+
+def test_job_continues_on_cpu_after_onednn_failure(
+    tmp_path, settings, installed_model, chunked, monkeypatch  # noqa: F811
+) -> None:
+    monkeypatch.setenv("LOCALSUB_OVERLAP", "0")
+    gpu, cpu, devices = DyingLLM(ok_calls=1, message=ONEDNN_FAIL), FakeLLM(), []
+    record, _ = run(
+        settings, tmp_path, StreamingWhisper(delay=0), None, device="auto",
+        llm_factory=_factory(gpu, cpu, devices),
+    )  # fmt: skip
+    assert record.state == JobState.COMPLETED, record.error_message
+    assert devices == ["GPU", "CPU"]
+    assert record.translation_device.resolved == "CPU"
+    assert record.translation_recoveries[0]["ok"] is True
+    srt = (settings.output_dir / "Họp giao ban.vi.srt").read_text(encoding="utf-8")
+    assert srt.count("[vi] chunk") == CHUNKS * LINES_PER_CHUNK
