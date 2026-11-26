@@ -829,7 +829,13 @@ def translate_feed(
         try:
             values, missed = engine.unit(batches)
         except LocalSubError as exc:
-            if is_device_fatal(exc):
+            fatal = is_device_fatal(exc)
+            if not fatal and tuner.back_off(size):
+                continue  # retry the same batches with fewer per call
+            # A poisoned driver, or a GPU/NPU error that fewer batches did not fix (e.g. the
+            # oneDNN "could not execute a primitive"): hand over to the caller, which keeps
+            # these lines and continues on the CPU, instead of failing the whole job.
+            if fatal or (device is not None and device != "CPU"):
                 busy += clock() - t0
                 raise TranslatorLost(
                     device,
@@ -845,8 +851,6 @@ def translate_feed(
                         interjection_lines=engine.interjections,
                     ),
                 ) from exc
-            if tuner.back_off(size):
-                continue  # retry the same batches with fewer per call
             raise
         elapsed = clock() - t0
         busy += elapsed
